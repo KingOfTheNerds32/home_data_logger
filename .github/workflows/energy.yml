@@ -1,6 +1,6 @@
 name: Energy Logger
 
-# Daily pull of the previous day's Enphase telemetry (backfills missed days).
+# Daily Enphase pull plus a budgeted history backfill; see energy_logger.py.
 on:
   schedule:
     - cron: '17 11 * * *'  # ~3-4 AM Pacific, after the day is complete
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   energy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
         run: |
           git config --global user.name "PoolBot"
           git config --global user.email "poolbot@github.com"
-          git add energy_history.csv
+          git add energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv enphase_state.json 2>/dev/null || true
           git commit -m "Energy Update: $(date)" || exit 0
           for attempt in 1 2 3 4; do
             git pull --rebase origin main 2>/dev/null || true
