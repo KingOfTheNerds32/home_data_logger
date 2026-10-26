@@ -1,0 +1,39 @@
+name: Enphase Authorize
+
+# One-time setup (or re-setup if authorization lapses). Paste the code shown
+# on the Enphase approval page; it is single-use and exchanged immediately.
+# The resulting tokens are stored only as repository secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: 'Code from the Enphase approval page'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install pandas pytz requests pynacl
+
+      - name: Exchange Code for Tokens
+        env:
+          ENPHASE_API_KEY: ${{ secrets.ENPHASE_API_KEY }}
+          ENPHASE_CLIENT_ID: ${{ secrets.ENPHASE_CLIENT_ID }}
+          ENPHASE_CLIENT_SECRET: ${{ secrets.ENPHASE_CLIENT_SECRET }}
+          GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+          CODE: ${{ inputs.code }}
+        run: python energy_logger.py authorize "$CODE"

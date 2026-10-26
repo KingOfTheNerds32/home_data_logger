@@ -2,16 +2,15 @@
 Enphase energy logger: pulls 15-minute solar production, home consumption,
 battery and grid telemetry from the Enphase v4 cloud API.
 
-Runs inside the private data repo checkout. Login tokens are kept in
-enphase_tokens.json there, because Enphase rotates the refresh token on every
-use and GitHub secrets can't be updated from a workflow without extra access.
+Runs inside the private data repo checkout. Enphase rotates the refresh token
+on every use, so the new one is written back to the ENPHASE_REFRESH_TOKEN
+GitHub secret (via GH_SECRETS_TOKEN) each run. Tokens never touch git.
 
 Usage:
     python energy_logger.py authorize <code>   # one-time setup
     python energy_logger.py                    # daily pull (backfills gaps)
 """
 import base64
-import json
 import os
 import sys
 import time
@@ -20,12 +19,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytz
 import requests
+from nacl import encoding, public
 
 API_BASE = "https://api.enphaseenergy.com/api/v4"
 TOKEN_URL = "https://api.enphaseenergy.com/oauth/token"
 REDIRECT_URI = "https://api.enphaseenergy.com/oauth/redirect_uri"
 
-TOKEN_FILE = 'enphase_tokens.json'
 DATA_FILE = 'energy_history.csv'
 PACIFIC = pytz.timezone('America/Los_Angeles')
 
@@ -54,9 +53,23 @@ def request_tokens(params):
     return tokens
 
 
-def save_tokens(tokens):
-    with open(TOKEN_FILE, 'w') as f:
-        json.dump(tokens, f, indent=2)
+def save_secret(name, value):
+    """Create or update a GitHub Actions secret on this repository."""
+    repo = os.environ.get('GITHUB_REPOSITORY')
+    gh_token = os.environ.get('GH_SECRETS_TOKEN')
+    if not repo or not gh_token:
+        raise RuntimeError("Missing GITHUB_REPOSITORY or GH_SECRETS_TOKEN; cannot save Enphase token")
+    headers = {'Authorization': f"Bearer {gh_token}", 'Accept': 'application/vnd.github+json'}
+    api = f"https://api.github.com/repos/{repo}/actions/secrets"
+    r = requests.get(f"{api}/public-key", headers=headers, timeout=30)
+    r.raise_for_status()
+    key = r.json()
+    sealed = public.SealedBox(public.PublicKey(key['key'].encode(), encoding.Base64Encoder()))
+    encrypted = base64.b64encode(sealed.encrypt(value.encode())).decode()
+    r = requests.put(f"{api}/{name}", headers=headers, timeout=30,
+                     json={'encrypted_value': encrypted, 'key_id': key['key_id']})
+    if r.status_code not in (201, 204):
+        raise RuntimeError(f"Saving secret {name} failed ({r.status_code}): {r.text[:200]}")
 
 
 def api_get(path, access_token, params=None):
@@ -75,8 +88,8 @@ def authorize(code):
     systems = api_get('/systems', tokens['access_token']).get('systems', [])
     if not systems:
         raise RuntimeError("Authorized, but no Enphase systems are visible to this account")
-    tokens['system_id'] = systems[0]['system_id']
-    save_tokens(tokens)
+    save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
+    save_secret('ENPHASE_SYSTEM_ID', str(systems[0]['system_id']))
     print(f"Authorized. Found {len(systems)} system(s); using the first one.")
 
 
@@ -121,16 +134,15 @@ def fetch_day(system_id, access_token, day_start):
 
 
 def harvest_energy_data():
-    if not os.path.exists(TOKEN_FILE):
+    refresh_token = os.environ.get('ENPHASE_REFRESH_TOKEN')
+    system_id = os.environ.get('ENPHASE_SYSTEM_ID')
+    if not refresh_token or not system_id:
         raise RuntimeError("Not authorized yet - run the Enphase Authorize workflow")
-    with open(TOKEN_FILE) as f:
-        stored = json.load(f)
 
     # Refresh every run: it keeps the refresh token from expiring, and the new
     # one is saved immediately so a later failure can't lose it.
-    tokens = request_tokens({'grant_type': 'refresh_token', 'refresh_token': stored['refresh_token']})
-    tokens['system_id'] = stored['system_id']
-    save_tokens(tokens)
+    tokens = request_tokens({'grant_type': 'refresh_token', 'refresh_token': refresh_token})
+    save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
 
     existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame()
     today = datetime.now(PACIFIC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -145,7 +157,7 @@ def harvest_energy_data():
     rows = {}
     day = start
     while day < today:
-        rows.update(fetch_day(tokens['system_id'], tokens['access_token'], day))
+        rows.update(fetch_day(system_id, tokens['access_token'], day))
         day = PACIFIC.normalize(day + timedelta(days=1))
 
     if not rows:
