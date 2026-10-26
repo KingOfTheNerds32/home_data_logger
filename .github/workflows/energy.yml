@@ -50,6 +50,7 @@ jobs:
           ENPHASE_CLIENT_SECRET: ${{ secrets.ENPHASE_CLIENT_SECRET }}
           ENPHASE_REFRESH_TOKEN: ${{ secrets.ENPHASE_REFRESH_TOKEN }}
           ENPHASE_SYSTEM_ID: ${{ secrets.ENPHASE_SYSTEM_ID }}
+          ENPHASE_EV_SERIAL: ${{ secrets.ENPHASE_EV_SERIAL }}
           GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
         run: python ../energy_logger.py
 
