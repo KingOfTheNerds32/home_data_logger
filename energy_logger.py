@@ -137,7 +137,10 @@ def harvest_energy_data():
     refresh_token = os.environ.get('ENPHASE_REFRESH_TOKEN')
     system_id = os.environ.get('ENPHASE_SYSTEM_ID')
     if not refresh_token or not system_id:
-        raise RuntimeError("Not authorized yet - run the Enphase Authorize workflow")
+        # Never set up yet: skip quietly rather than failing every night.
+        # (An expired or revoked token is a real failure and still raises.)
+        print("Enphase not authorized yet - run the Enphase Authorize workflow. Skipping.")
+        return
 
     # Refresh every run: it keeps the refresh token from expiring, and the new
     # one is saved immediately so a later failure can't lose it.
