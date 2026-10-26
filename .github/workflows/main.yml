@@ -33,10 +33,6 @@ jobs:
           git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
           git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
 
-      # One-time migration of the CSV history that used to live in this repo.
-      - name: Migrate Old Data
-        run: python3 migrate_data.py data
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
