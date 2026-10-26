@@ -33,6 +33,18 @@ async def harvest_pool_data(ts_string):
         
         row_data = {dev_id: device.state for dev_id, device in system.devices.items()}
 
+        # The heat pump is reported in a nested 'heatpump_info' block that the
+        # library discards, so read it from the raw home screen response.
+        # See docs/heat_pump.md.
+        heat_pump_info = {}
+        try:
+            home = (await system._send_home_screen_request()).json()
+            for item in home.get('home_screen', []):
+                if 'heatpump_info' in item:
+                    heat_pump_info = item['heatpump_info']
+        except Exception as e:
+            print(f"Heat pump lookup failed: {e}")
+
         # Helper to convert 0/1 or "0"/"1" to ON/OFF
         def on_off(val):
             if val is None or val == "": return "OFF"
@@ -69,7 +81,11 @@ async def harvest_pool_data(ts_string):
             'chlorinator_present': row_data.get('is_icl_present', 'N/A'),
             'ph': row_data.get('ph', 'N/A'),
             'orp': row_data.get('orp', 'N/A'),
-            'salinity': row_data.get('pool_salinity', 'N/A')
+            'salinity': row_data.get('pool_salinity', 'N/A'),
+
+            # Heat Pump ('on' means enabled, not that the compressor is running)
+            'heat_pump': str(heat_pump_info['heatpumpstatus']).upper() if 'heatpumpstatus' in heat_pump_info else 'N/A',
+            'heat_pump_mode': heat_pump_info.get('heatpumpmode', 'N/A')
         }
 
         # Save to CSV
