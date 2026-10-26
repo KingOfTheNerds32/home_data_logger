@@ -53,8 +53,8 @@ def request_tokens(params):
     return tokens
 
 
-def save_secret(name, value):
-    """Create or update a GitHub Actions secret on this repository."""
+def secrets_api():
+    """Headers, base URL and public key for this repo's Actions secrets."""
     repo = os.environ.get('GITHUB_REPOSITORY')
     gh_token = os.environ.get('GH_SECRETS_TOKEN')
     if not repo or not gh_token:
@@ -62,8 +62,15 @@ def save_secret(name, value):
     headers = {'Authorization': f"Bearer {gh_token}", 'Accept': 'application/vnd.github+json'}
     api = f"https://api.github.com/repos/{repo}/actions/secrets"
     r = requests.get(f"{api}/public-key", headers=headers, timeout=30)
-    r.raise_for_status()
-    key = r.json()
+    if r.status_code != 200:
+        raise RuntimeError(f"GH_SECRETS_TOKEN can't manage secrets on {repo} ({r.status_code}). "
+                           "It needs access to this repo with 'Secrets: Read and write'.")
+    return headers, api, r.json()
+
+
+def save_secret(name, value):
+    """Create or update a GitHub Actions secret on this repository."""
+    headers, api, key = secrets_api()
     sealed = public.SealedBox(public.PublicKey(key['key'].encode(), encoding.Base64Encoder()))
     encrypted = base64.b64encode(sealed.encrypt(value.encode())).decode()
     r = requests.put(f"{api}/{name}", headers=headers, timeout=30,
@@ -86,6 +93,8 @@ def api_get(path, access_token, params=None, optional=False):
 
 def authorize(code):
     """Exchange the one-time code from the Enphase approval page for tokens."""
+    # Check we can store the result first, so a setup problem doesn't use up the code.
+    secrets_api()
     tokens = request_tokens({'grant_type': 'authorization_code', 'redirect_uri': REDIRECT_URI, 'code': code})
     systems = api_get('/systems', tokens['access_token']).get('systems', [])
     if not systems:
@@ -148,6 +157,8 @@ def harvest_energy_data():
         # (An expired or revoked token is a real failure and still raises.)
         print("Enphase not authorized yet - run the Enphase Authorize workflow. Skipping.")
         return
+
+    secrets_api()
 
     # Refresh every run: it keeps the refresh token from expiring, and the new
     # one is saved immediately so a later failure can't lose it.
