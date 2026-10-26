@@ -1,0 +1,66 @@
+name: Enphase Probe
+
+# Manual diagnostic: see investigation/enphase/probe.py. Uses ~20 API requests.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Shares the queue with the energy logger: both rotate the refresh token.
+concurrency:
+  group: telemetry
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Private Data Repo
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
+          git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install pandas pytz requests pynacl
+
+      - name: Probe Endpoints
+        working-directory: data
+        env:
+          ENPHASE_API_KEY: ${{ secrets.ENPHASE_API_KEY }}
+          ENPHASE_CLIENT_ID: ${{ secrets.ENPHASE_CLIENT_ID }}
+          ENPHASE_CLIENT_SECRET: ${{ secrets.ENPHASE_CLIENT_SECRET }}
+          ENPHASE_REFRESH_TOKEN: ${{ secrets.ENPHASE_REFRESH_TOKEN }}
+          ENPHASE_SYSTEM_ID: ${{ secrets.ENPHASE_SYSTEM_ID }}
+          GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+        run: python ../investigation/enphase/probe.py
+
+      - name: Generate Job Summary
+        if: always()
+        run: cat data/probe_summary.md >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Save Raw Responses
+        if: always()
+        working-directory: data
+        run: |
+          git config --global user.name "PoolBot"
+          git config --global user.email "poolbot@github.com"
+          git add probe_results 2>/dev/null || exit 0
+          git commit -m "Enphase probe: $(date)" || exit 0
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main 2>/dev/null || true
+            git push origin HEAD:main && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
