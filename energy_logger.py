@@ -1,6 +1,17 @@
 """
-Enphase energy logger: pulls 15-minute solar production, home consumption,
-battery and grid telemetry from the Enphase v4 cloud API.
+Enphase energy logger: pulls solar, home consumption, battery, grid and EV
+charger data from the Enphase v4 cloud API into the private data repo.
+
+Files written (in the data repo checkout, the working directory):
+  energy_history.csv   15-min production, consumption, battery, grid, EV charging
+  production_5min.csv  5-min solar production (going forward only)
+  ev_sessions.csv      EV charging sessions with energy, miles and cost
+  energy_daily.csv     daily totals since the system was installed
+  enphase_state.json   request budget, EV charger serial, backfill progress
+
+The free plan allows 1,000 requests a month, so requests are counted and the
+history backfill (a week per request, newest first) only uses what the daily
+routine leaves spare.
 
 Runs inside the private data repo checkout. Enphase rotates the refresh token
 on every use, so the new one is written back to the ENPHASE_REFRESH_TOKEN
@@ -8,9 +19,10 @@ GitHub secret (via GH_SECRETS_TOKEN) each run. Tokens never touch git.
 
 Usage:
     python energy_logger.py authorize <code>   # one-time setup
-    python energy_logger.py                    # daily pull (backfills gaps)
+    python energy_logger.py                    # daily pull + history backfill
 """
 import base64
+import json
 import os
 import sys
 import time
@@ -26,12 +38,41 @@ TOKEN_URL = "https://api.enphaseenergy.com/oauth/token"
 REDIRECT_URI = "https://api.enphaseenergy.com/oauth/redirect_uri"
 
 DATA_FILE = 'energy_history.csv'
+MICRO_FILE = 'production_5min.csv'
+SESSIONS_FILE = 'ev_sessions.csv'
+DAILY_FILE = 'energy_daily.csv'
+STATE_FILE = 'enphase_state.json'
 PACIFIC = pytz.timezone('America/Los_Angeles')
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# How far back to fill gaps if runs were missed. Each day costs ~5 requests.
-MAX_BACKFILL_DAYS = 7
-# The free plan allows 10 requests per minute.
+# How far back the daily pull fills gaps if runs were missed.
+MAX_CATCHUP_DAYS = 7
+# The free plan allows 10 requests per minute and 1,000 per month. The daily
+# routine uses ~8 a day; the backfill stops once the month reaches the budget.
 REQUEST_SPACING_SECONDS = 7
+MONTHLY_BUDGET = 850
+BACKFILL_REQUESTS_PER_RUN = 20
+
+# 15-minute telemetry endpoints and the columns each provides.
+TELEMETRY = [
+    ('telemetry/production_meter', {'production_wh': ['wh_del']}),
+    ('telemetry/consumption_meter', {'consumption_wh': ['enwh']}),
+    ('telemetry/battery', {'battery_charge_wh': ['charge.enwh'],
+                           'battery_discharge_wh': ['discharge.enwh'],
+                           'battery_soc_pct': ['soc.percent']}),
+    ('energy_import_telemetry', {'grid_import_wh': ['wh_imported']}),
+    ('energy_export_telemetry', {'grid_export_wh': ['wh_exported']}),
+]
+EV_COLUMNS = {'ev_charging_wh': ['consumption']}
+
+# Lifetime endpoints return one value per day since start_date.
+LIFETIME = [
+    ('energy_lifetime', {'production_wh': 'production'}),
+    ('consumption_lifetime', {'consumption_wh': 'consumption'}),
+    ('battery_lifetime', {'battery_charge_wh': 'charge', 'battery_discharge_wh': 'discharge'}),
+    ('energy_import_lifetime', {'grid_import_wh': 'import'}),
+    ('energy_export_lifetime', {'grid_export_wh': 'export'}),
+]
 
 
 def credentials():
@@ -79,35 +120,69 @@ def save_secret(name, value):
         raise RuntimeError(f"Saving secret {name} failed ({r.status_code}): {r.text[:200]}")
 
 
-def api_get(path, access_token, params=None, optional=False):
-    api_key, _, _ = credentials()
-    r = requests.get(f"{API_BASE}{path}", params={'key': api_key, **(params or {})},
-                     headers={'Authorization': f"Bearer {access_token}"}, timeout=60)
-    time.sleep(REQUEST_SPACING_SECONDS)
-    if r.status_code in (401, 403) and optional:
-        return None
-    if r.status_code != 200:
-        raise RuntimeError(f"Enphase API error on {path} ({r.status_code}): {r.text[:200]}")
-    return r.json()
+class Enphase:
+    """API client that counts requests against the monthly budget."""
+
+    def __init__(self, system_id, access_token, state):
+        self.base = f"/systems/{system_id}"
+        self.access_token = access_token
+        self.state = state
+        self.month = datetime.now(PACIFIC).strftime('%Y-%m')
+        self.used_this_run = 0
+
+    @property
+    def used_this_month(self):
+        return self.state.setdefault('usage', {}).get(self.month, 0)
+
+    def get(self, path, params=None, optional=False):
+        api_key = credentials()[0]
+        r = requests.get(f"{API_BASE}{self.base}{path}", params={'key': api_key, **(params or {})},
+                         headers={'Authorization': f"Bearer {self.access_token}"}, timeout=60)
+        self.state.setdefault('usage', {})[self.month] = self.used_this_month + 1
+        self.used_this_run += 1
+        time.sleep(REQUEST_SPACING_SECONDS)
+        if r.status_code in (400, 401, 403, 404) and optional:
+            return None
+        if r.status_code != 200:
+            raise RuntimeError(f"Enphase API error on {path} ({r.status_code}): {r.text[:200]}")
+        return r.json()
 
 
-def authorize(code):
-    """Exchange the one-time code from the Enphase approval page for tokens."""
-    # Check we can store the result first, so a setup problem doesn't use up the code.
-    secrets_api()
-    tokens = request_tokens({'grant_type': 'authorization_code', 'redirect_uri': REDIRECT_URI, 'code': code})
-    systems = api_get('/systems', tokens['access_token']).get('systems', [])
-    if not systems:
-        raise RuntimeError("Authorized, but no Enphase systems are visible to this account")
-    save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
-    save_secret('ENPHASE_SYSTEM_ID', str(systems[0]['system_id']))
-    print(f"Authorized. Found {len(systems)} system(s); using the first one.")
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+
+
+def local_midnight(dt):
+    return PACIFIC.localize(datetime(dt.year, dt.month, dt.day))
+
+
+def to_local(epoch):
+    return datetime.fromtimestamp(epoch, PACIFIC).strftime(TIME_FORMAT)
+
+
+def merge_csv(path, new_rows, key):
+    """Add rows to a CSV, replacing any with the same key, sorted by key."""
+    if not new_rows:
+        return 0
+    new = pd.DataFrame(new_rows)
+    existing = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+    combined = pd.concat([existing, new]).drop_duplicates(key, keep='last').sort_values(key)
+    combined.to_csv(path, index=False)
+    return len(new)
 
 
 def intervals(payload):
     """Telemetry intervals, flattening the nested lists some endpoints use."""
     out = []
-    for item in payload.get('intervals', []):
+    for item in payload.get('intervals', []) + payload.get('consumption', []):
         out.extend(item if isinstance(item, list) else [item])
     return out
 
@@ -122,31 +197,122 @@ def first_value(interval, *keys):
     return None
 
 
-def fetch_day(system_id, access_token, day_start):
-    """All telemetry for one local day, keyed by interval end (epoch seconds)."""
-    params = {'granularity': 'day', 'start_at': int(day_start.timestamp())}
-    base = f"/systems/{system_id}"
+def fetch_telemetry(api, start, granularity, include_ev):
+    """15-min telemetry for a day or week starting at local midnight `start`."""
+    params = {'granularity': granularity, 'start_at': int(start.timestamp())}
     rows = {}
-
-    def merge(endpoint, columns, optional=False):
-        payload = api_get(f"{base}/{endpoint}", access_token, params, optional)
+    sources = [(f"/{endpoint}", columns) for endpoint, columns in TELEMETRY]
+    if include_ev:
+        sources.append((f"/ev_charger/{api.state['ev_serial']}/telemetry", EV_COLUMNS))
+    for path, columns in sources:
+        payload = api.get(path, params, optional=True)
         if payload is None:
-            print(f"Skipping {endpoint}: not included in this Enphase app's access")
-            return
+            print(f"Skipping {path.split('/')[-1]}: not available")
+            continue
         for interval in intervals(payload):
-            row = rows.setdefault(interval['end_at'], {})
+            row = rows.setdefault(interval['end_at'], {'interval_end': to_local(interval['end_at'])})
             for column, keys in columns.items():
                 row[column] = first_value(interval, *keys)
+    return [rows[end] for end in sorted(rows)]
 
-    merge('telemetry/production_meter', {'production_wh': ['wh_del']})
-    merge('telemetry/consumption_meter', {'consumption_wh': ['enwh']})
-    # These may not be included in the free plan's access, so they're optional.
-    merge('telemetry/battery', {'battery_charge_wh': ['charge.enwh'],
-                                'battery_discharge_wh': ['discharge.enwh'],
-                                'battery_soc_pct': ['soc.percent']}, optional=True)
-    merge('energy_import_telemetry', {'grid_import_wh': ['wh_imported']}, optional=True)
-    merge('energy_export_telemetry', {'grid_export_wh': ['wh_exported']}, optional=True)
-    return rows
+
+def find_ev_charger(api):
+    """Look up (once) the EV charger's serial number, needed for its endpoints."""
+    if 'ev_serial' not in api.state:
+        payload = api.get('/ev_charger/devices', optional=True) or {}
+        devices = payload.get('devices') or {}
+        chargers = devices.get('ev_chargers', []) if isinstance(devices, dict) else devices
+        api.state['ev_serial'] = chargers[0].get('serial_number') if chargers else None
+    return api.state['ev_serial']
+
+
+def catch_up(api, today):
+    """Pull every complete day since the last stored one (up to a week)."""
+    existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame()
+    if existing.empty:
+        day = today - timedelta(days=1)
+    else:
+        last = PACIFIC.localize(datetime.strptime(existing['interval_end'].max(), TIME_FORMAT))
+        day = max(local_midnight(last), today - timedelta(days=MAX_CATCHUP_DAYS))
+    rows, micro = [], []
+    while day < today:
+        rows += fetch_telemetry(api, day, 'day', bool(api.state.get('ev_serial')))
+        payload = api.get('/telemetry/production_micro',
+                          {'granularity': 'day', 'start_at': int(day.timestamp())}, optional=True)
+        for interval in intervals(payload or {}):
+            micro.append({'interval_end': to_local(interval['end_at']),
+                          'production_wh': interval.get('enwh'), 'power_w': interval.get('powr')})
+        day = local_midnight(day + timedelta(days=1, hours=2))
+    print(f"Daily pull: {merge_csv(DATA_FILE, rows, 'interval_end')} 15-min and "
+          f"{merge_csv(MICRO_FILE, micro, 'interval_end')} 5-min intervals")
+
+
+def update_sessions(api):
+    """Store EV sessions; the endpoint returns the most recent 20."""
+    if not api.state.get('ev_serial'):
+        return
+    payload = api.get(f"/ev_charger/{api.state['ev_serial']}/sessions", optional=True) or {}
+    rows = [{'start_time': to_local(s['start_time']), 'end_time': to_local(s['end_time']),
+             'duration_s': s.get('duration'), 'charge_time_s': s.get('charge_time'),
+             'energy_kwh': s.get('energy_added'), 'miles_added': s.get('miles_added'), 'cost': s.get('cost')}
+            for s in payload.get('sessions', []) if s.get('start_time')]
+    print(f"EV sessions: {merge_csv(SESSIONS_FILE, rows, 'start_time')} recent sessions merged")
+
+
+def update_daily_totals(api, today):
+    """Daily totals since install from the lifetime endpoints, refreshed weekly."""
+    if os.path.exists(DAILY_FILE):
+        last = pd.read_csv(DAILY_FILE)['date'].max()
+        if last >= (today - timedelta(days=7)).strftime('%Y-%m-%d'):
+            return
+    days = {}
+    for endpoint, columns in LIFETIME:
+        payload = api.get(f"/{endpoint}", optional=True)
+        if not payload:
+            continue
+        start = datetime.strptime(payload['start_date'], '%Y-%m-%d')
+        api.state['history_start'] = min(payload['start_date'], api.state.get('history_start', '9999'))
+        for column, key in columns.items():
+            for i, value in enumerate(payload.get(key, [])):
+                date = (start + timedelta(days=i)).strftime('%Y-%m-%d')
+                days.setdefault(date, {'date': date})[column] = value
+    # Today's value is partial, so leave it for next time.
+    rows = [row for date, row in sorted(days.items()) if date < today.strftime('%Y-%m-%d')]
+    print(f"Daily totals: {merge_csv(DAILY_FILE, rows, 'date')} days since {api.state.get('history_start')}")
+
+
+def backfill(api):
+    """Fill 15-min history a week at a time, newest first, within the budget."""
+    if not api.state.get('history_start') or not os.path.exists(DATA_FILE):
+        return
+    history_start = PACIFIC.localize(datetime.strptime(api.state['history_start'], '%Y-%m-%d'))
+    per_week = len(TELEMETRY) + (1 if api.state.get('ev_serial') and not api.state.get('ev_history_done') else 0)
+    rows, weeks, run_start = [], 0, api.used_this_run
+    while True:
+        earliest = local_midnight(datetime.strptime(
+            min([r['interval_end'] for r in rows] + [pd.read_csv(DATA_FILE)['interval_end'].min()]), TIME_FORMAT))
+        if earliest <= history_start:
+            print("Backfill complete: 15-min history reaches the install date")
+            break
+        if api.used_this_run - run_start + per_week > BACKFILL_REQUESTS_PER_RUN or \
+                api.used_this_month + per_week > MONTHLY_BUDGET:
+            break
+        start = max(local_midnight(earliest - timedelta(days=7)), history_start)
+        include_ev = per_week > len(TELEMETRY)
+        week = fetch_telemetry(api, start, 'week', include_ev)
+        # Before the charger was installed there's no EV data; stop asking.
+        if include_ev and all(r.get('ev_charging_wh') is None for r in week):
+            api.state['ev_history_done'] = True
+            per_week = len(TELEMETRY)
+        if not week:
+            print(f"No data for week of {start.date()}; treating history as complete")
+            api.state['history_start'] = start.strftime('%Y-%m-%d')
+            break
+        rows += week
+        weeks += 1
+    if rows:
+        merge_csv(DATA_FILE, rows, 'interval_end')
+        print(f"Backfill: {weeks} week(s), now back to {min(r['interval_end'] for r in rows)[:10]}")
 
 
 def harvest_energy_data():
@@ -165,31 +331,35 @@ def harvest_energy_data():
     tokens = request_tokens({'grant_type': 'refresh_token', 'refresh_token': refresh_token})
     save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
 
-    existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame()
-    today = datetime.now(PACIFIC).replace(hour=0, minute=0, second=0, microsecond=0)
-    if existing.empty:
-        start = today - timedelta(days=1)
-    else:
-        last = PACIFIC.localize(datetime.strptime(existing['interval_end'].max(), "%Y-%m-%d %H:%M:%S"))
-        start = max(last.replace(hour=0, minute=0, second=0, microsecond=0),
-                    today - timedelta(days=MAX_BACKFILL_DAYS))
+    state = load_state()
+    api = Enphase(system_id, tokens['access_token'], state)
+    today = local_midnight(datetime.now(PACIFIC))
+    try:
+        find_ev_charger(api)
+        catch_up(api, today)
+        update_sessions(api)
+        update_daily_totals(api, today)
+        backfill(api)
+    finally:
+        save_state(state)
+        print(f"Requests: {api.used_this_run} this run, {api.used_this_month} this month (budget {MONTHLY_BUDGET})")
 
-    # Only complete days are pulled, so every stored day is final.
-    rows = {}
-    day = start
-    while day < today:
-        rows.update(fetch_day(system_id, tokens['access_token'], day))
-        day = PACIFIC.normalize(day + timedelta(days=1))
 
-    if not rows:
-        print("Energy data already up to date.")
-        return
-
-    new = pd.DataFrame([{'interval_end': datetime.fromtimestamp(end, PACIFIC).strftime("%Y-%m-%d %H:%M:%S"), **values}
-                        for end, values in sorted(rows.items())])
-    combined = pd.concat([existing, new]).drop_duplicates('interval_end', keep='last').sort_values('interval_end')
-    combined.to_csv(DATA_FILE, index=False)
-    print(f"Logged {len(new)} energy intervals from {new['interval_end'].min()} to {new['interval_end'].max()}")
+def authorize(code):
+    """Exchange the one-time code from the Enphase approval page for tokens."""
+    # Check we can store the result first, so a setup problem doesn't use up the code.
+    secrets_api()
+    tokens = request_tokens({'grant_type': 'authorization_code', 'redirect_uri': REDIRECT_URI, 'code': code})
+    r = requests.get(f"{API_BASE}/systems", params={'key': credentials()[0]},
+                     headers={'Authorization': f"Bearer {tokens['access_token']}"}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"Enphase API error listing systems ({r.status_code}): {r.text[:200]}")
+    systems = r.json().get('systems', [])
+    if not systems:
+        raise RuntimeError("Authorized, but no Enphase systems are visible to this account")
+    save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
+    save_secret('ENPHASE_SYSTEM_ID', str(systems[0]['system_id']))
+    print(f"Authorized. Found {len(systems)} system(s); using the first one.")
 
 
 if __name__ == "__main__":
