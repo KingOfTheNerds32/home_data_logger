@@ -72,11 +72,13 @@ def save_secret(name, value):
         raise RuntimeError(f"Saving secret {name} failed ({r.status_code}): {r.text[:200]}")
 
 
-def api_get(path, access_token, params=None):
+def api_get(path, access_token, params=None, optional=False):
     api_key, _, _ = credentials()
     r = requests.get(f"{API_BASE}{path}", params={'key': api_key, **(params or {})},
                      headers={'Authorization': f"Bearer {access_token}"}, timeout=60)
     time.sleep(REQUEST_SPACING_SECONDS)
+    if r.status_code in (401, 403) and optional:
+        return None
     if r.status_code != 200:
         raise RuntimeError(f"Enphase API error on {path} ({r.status_code}): {r.text[:200]}")
     return r.json()
@@ -117,19 +119,24 @@ def fetch_day(system_id, access_token, day_start):
     base = f"/systems/{system_id}"
     rows = {}
 
-    def merge(endpoint, columns):
-        for interval in intervals(api_get(f"{base}/{endpoint}", access_token, params)):
+    def merge(endpoint, columns, optional=False):
+        payload = api_get(f"{base}/{endpoint}", access_token, params, optional)
+        if payload is None:
+            print(f"Skipping {endpoint}: not included in this Enphase app's access")
+            return
+        for interval in intervals(payload):
             row = rows.setdefault(interval['end_at'], {})
             for column, keys in columns.items():
                 row[column] = first_value(interval, *keys)
 
     merge('telemetry/production_meter', {'production_wh': ['wh_del']})
     merge('telemetry/consumption_meter', {'consumption_wh': ['enwh']})
+    # These may not be included in the free plan's access, so they're optional.
     merge('telemetry/battery', {'battery_charge_wh': ['charge.enwh'],
                                 'battery_discharge_wh': ['discharge.enwh'],
-                                'battery_soc_pct': ['soc.percent']})
-    merge('energy_import_telemetry', {'grid_import_wh': ['wh_imported']})
-    merge('energy_export_telemetry', {'grid_export_wh': ['wh_exported']})
+                                'battery_soc_pct': ['soc.percent']}, optional=True)
+    merge('energy_import_telemetry', {'grid_import_wh': ['wh_imported']}, optional=True)
+    merge('energy_export_telemetry', {'grid_export_wh': ['wh_exported']}, optional=True)
     return rows
 
 
