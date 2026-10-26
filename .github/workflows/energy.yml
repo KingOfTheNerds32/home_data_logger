@@ -1,0 +1,70 @@
+name: Energy Logger
+
+# Daily pull of the previous day's Enphase telemetry (backfills missed days).
+on:
+  schedule:
+    - cron: '17 11 * * *'  # ~3-4 AM Pacific, after the day is complete
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Share the logger queue so pushes to the data repo never collide.
+concurrency:
+  group: telemetry
+  cancel-in-progress: false
+
+jobs:
+  energy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Private Data Repo
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          if [ -z "$DATA_REPO_TOKEN" ]; then
+            echo "::error::DATA_REPO_TOKEN secret is missing - add it under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
+          git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install pandas pytz requests pynacl
+
+      # A failure here turns the run red, which triggers GitHub's failure email.
+      - name: Pull Enphase Data
+        working-directory: data
+        env:
+          ENPHASE_API_KEY: ${{ secrets.ENPHASE_API_KEY }}
+          ENPHASE_CLIENT_ID: ${{ secrets.ENPHASE_CLIENT_ID }}
+          ENPHASE_CLIENT_SECRET: ${{ secrets.ENPHASE_CLIENT_SECRET }}
+          ENPHASE_REFRESH_TOKEN: ${{ secrets.ENPHASE_REFRESH_TOKEN }}
+          ENPHASE_SYSTEM_ID: ${{ secrets.ENPHASE_SYSTEM_ID }}
+          GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+        run: python ../energy_logger.py
+
+      - name: Commit and Push Data
+        working-directory: data
+        run: |
+          git config --global user.name "PoolBot"
+          git config --global user.email "poolbot@github.com"
+          git add energy_history.csv
+          git commit -m "Energy Update: $(date)" || exit 0
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin main 2>/dev/null || true
+            git push origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 5))
+          done
+          echo "Failed to push energy data after 4 attempts"
+          exit 1
