@@ -3,6 +3,11 @@ name: Enphase Probe
 # Manual diagnostic: see investigation/enphase/probe.py. Uses ~20 API requests.
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Leave blank for all endpoints, or "ev" for just the EV charger'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -44,7 +49,8 @@ jobs:
           ENPHASE_REFRESH_TOKEN: ${{ secrets.ENPHASE_REFRESH_TOKEN }}
           ENPHASE_SYSTEM_ID: ${{ secrets.ENPHASE_SYSTEM_ID }}
           GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
-        run: python ../investigation/enphase/probe.py
+          ONLY: ${{ inputs.only }}
+        run: python ../investigation/enphase/probe.py $ONLY
 
       - name: Generate Job Summary
         if: always()

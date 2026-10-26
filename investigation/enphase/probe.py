@@ -6,7 +6,7 @@ which ones this app's plan allows and what shape of data each returns.
 - The public run summary (probe_summary.md) lists only status codes, field
   names and interval counts/spans, never values or identifiers.
 
-Usage (from the data repo checkout): python ../investigation/enphase/probe.py
+Usage (from the data repo checkout): python ../investigation/enphase/probe.py [ev]
 """
 import json
 import os
@@ -103,11 +103,16 @@ def main():
         results.append((name, shown_path or path.replace(system_id, '{id}'), r.status_code, detail, schema(body)))
         return body if r.status_code == 200 else None
 
+    # "python probe.py ev" re-runs only the EV charger calls (~4 requests).
+    if 'ev' in sys.argv[1:]:
+        candidates = [c for c in candidates if c[0] == 'ev_charger_devices']
+
     for name, path, params in candidates:
         body = probe(name, path, params)
         # EV charger detail endpoints need the charger's serial number.
         if name == 'ev_charger_devices' and body:
-            chargers = body.get('devices') or body.get('ev_chargers') or []
+            devices = body.get('devices') or {}
+            chargers = devices.get('ev_chargers', []) if isinstance(devices, dict) else devices
             serial = chargers[0].get('serial_number') if chargers and isinstance(chargers[0], dict) else None
             if serial:
                 for sub, params in [('sessions', None), ('lifetime', None),
