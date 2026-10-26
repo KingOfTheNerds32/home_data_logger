@@ -8,9 +8,15 @@ on:
 permissions:
   contents: write
 
+# Overlapping runs would race on the CSVs and the push, so queue them instead.
+concurrency:
+  group: telemetry
+  cancel-in-progress: false
+
 jobs:
   scrape_and_log:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -25,6 +31,9 @@ jobs:
         run: pip install pandas pytz aiohttp httpx requests iaqualink==0.6.0 --force-reinstall
 
       - name: Run Telemetry Suite
+        id: telemetry
+        # Keep going so whatever data was collected still gets committed.
+        continue-on-error: true
         env:
           IQUALINK_USER: ${{ secrets.IQUALINK_USER }}
           IQUALINK_PASS: ${{ secrets.IQUALINK_PASS }}
@@ -35,12 +44,29 @@ jobs:
 
       - name: Generate Job Summary
         # This makes the table appear on the Action run page
-        run: cat job_summary.md >> $GITHUB_STEP_SUMMARY
+        if: always()
+        run: cat job_summary.md >> $GITHUB_STEP_SUMMARY || echo "No summary generated" >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and Push Data
+        if: always()
         run: |
           git config --global user.name "PoolBot"
           git config --global user.email "poolbot@github.com"
           git add *.csv
           git commit -m "Telemetry Update: $(date)" || exit 0
-          git push
+          # Rebase onto anything pushed meanwhile (e.g. code changes) and retry.
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 5))
+          done
+          echo "Failed to push telemetry after 4 attempts"
+          exit 1
+
+      # A red run triggers GitHub's failure email. Only fail on sustained outages
+      # (decided in main.py) or if the script crashed outright, not on one-off blips.
+      - name: Raise Alert
+        if: steps.telemetry.outputs.alert == 'true' || steps.telemetry.outcome == 'failure'
+        run: |
+          echo "::error::Telemetry needs attention - see the run summary for details"
+          exit 1

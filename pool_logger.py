@@ -26,8 +26,7 @@ async def harvest_pool_data(ts_string):
             systems = await client.get_systems()
             
         if not systems:
-            print("No systems found after retry.")
-            return
+            raise RuntimeError("No iAquaLink systems found on account")
 
         system = list(systems.values())[0]
         await system.update()
@@ -81,4 +80,5 @@ async def harvest_pool_data(ts_string):
         print(f"Logged all equipment states at {ts_string} PT")
 
 if __name__ == "__main__":
-    asyncio.run(harvest_pool_data())
+    pacific_tz = pytz.timezone('America/Los_Angeles')
+    asyncio.run(harvest_pool_data(datetime.now(pacific_tz).strftime("%Y-%m-%d %H:%M:%S")))
