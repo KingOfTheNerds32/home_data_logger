@@ -24,6 +24,7 @@ Usage:
 import base64
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -75,6 +76,27 @@ LIFETIME = [
 ]
 
 
+def safe_error(r):
+    """A short description of a failed response that's safe for public logs.
+
+    Run logs on this public repo are visible to anyone, and Enphase error
+    bodies can echo the system ID, device serials or account details, so keep
+    only the error fields and mask any long numbers.
+    """
+    try:
+        body = r.json()
+        text = ' '.join(str(body.get(k)) for k in ('error', 'error_description', 'message', 'reason')
+                        if isinstance(body, dict) and body.get(k))
+    except ValueError:
+        text = ''
+    return redact(f"({r.status_code}) {text}".strip())
+
+
+def redact(text):
+    """Mask long numbers (system IDs, serial numbers) in text bound for logs."""
+    return re.sub(r'\d{6,}', '<id>', str(text))
+
+
 def credentials():
     keys = ['ENPHASE_API_KEY', 'ENPHASE_CLIENT_ID', 'ENPHASE_CLIENT_SECRET']
     missing = [k for k in keys if not os.environ.get(k)]
@@ -88,7 +110,7 @@ def request_tokens(params):
     basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     r = requests.post(TOKEN_URL, params=params, headers={'Authorization': f"Basic {basic}"}, timeout=30)
     if r.status_code != 200:
-        raise RuntimeError(f"Enphase token request failed ({r.status_code}): {r.text[:200]}")
+        raise RuntimeError(f"Enphase token request failed {safe_error(r)}")
     tokens = r.json()
     tokens['obtained_at'] = int(time.time())
     return tokens
@@ -117,7 +139,7 @@ def save_secret(name, value):
     r = requests.put(f"{api}/{name}", headers=headers, timeout=30,
                      json={'encrypted_value': encrypted, 'key_id': key['key_id']})
     if r.status_code not in (201, 204):
-        raise RuntimeError(f"Saving secret {name} failed ({r.status_code}): {r.text[:200]}")
+        raise RuntimeError(f"Saving secret {name} failed ({r.status_code})")
 
 
 class Enphase:
@@ -144,7 +166,7 @@ class Enphase:
         if r.status_code in (400, 401, 403, 404) and optional:
             return None
         if r.status_code != 200:
-            raise RuntimeError(f"Enphase API error on {path} ({r.status_code}): {r.text[:200]}")
+            raise RuntimeError(f"Enphase API error on {redact(path)} {safe_error(r)}")
         return r.json()
 
 
@@ -207,7 +229,7 @@ def fetch_telemetry(api, start, granularity, include_ev):
     for path, columns in sources:
         payload = api.get(path, params, optional=True)
         if payload is None:
-            print(f"Skipping {path.split('/')[-1]}: not available")
+            print(f"Skipping {redact(path)}: not available")
             continue
         for interval in intervals(payload):
             row = rows.setdefault(interval['end_at'], {'interval_end': to_local(interval['end_at'])})
@@ -353,7 +375,7 @@ def authorize(code):
     r = requests.get(f"{API_BASE}/systems", params={'key': credentials()[0]},
                      headers={'Authorization': f"Bearer {tokens['access_token']}"}, timeout=60)
     if r.status_code != 200:
-        raise RuntimeError(f"Enphase API error listing systems ({r.status_code}): {r.text[:200]}")
+        raise RuntimeError(f"Enphase API error listing systems {safe_error(r)}")
     systems = r.json().get('systems', [])
     if not systems:
         raise RuntimeError("Authorized, but no Enphase systems are visible to this account")
