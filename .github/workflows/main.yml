@@ -26,6 +26,10 @@ jobs:
         env:
           DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
         run: |
+          if [ -z "$DATA_REPO_TOKEN" ]; then
+            echo "::error::DATA_REPO_TOKEN secret is missing - add it under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
           git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
           git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
 
