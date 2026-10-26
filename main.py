@@ -8,6 +8,21 @@ import pytz
 from pool_logger import harvest_pool_data
 from weather_logger import harvest_weather_data
 
+# Alert after this many consecutive failed runs (~15 min at a 5 min cadence),
+# then re-alert every ALERT_REPEAT failed runs (~6 hours) while still down.
+ALERT_THRESHOLD = 3
+ALERT_REPEAT = 72
+
+
+def consecutive_failures(df_status, column):
+    """Count how many of the most recent runs failed for a service."""
+    count = 0
+    for status in reversed(df_status[column].tolist()):
+        if status == 'OK':
+            break
+        count += 1
+    return count
+
 async def main():
     # 1. SETUP TIMEZONES AND CURRENT TIME
     # GitHub Runners use UTC by default, so we must be explicit for Rolling Hills Estates (PST)
@@ -74,14 +89,21 @@ async def main():
             else:
                 print(f"All 3 pool attempts failed. Final error: {e}")
 
-    # 4. RUN WEATHER LOGGER
-    try:
-        harvest_weather_data(unified_ts)
-        results["Weather"] = True
-        print("Successfully logged weather data.")
-    except Exception as e:
-        errors["Weather"] = str(e)
-        print(f"Weather Logger failed: {e}")
+    # 4. RUN WEATHER LOGGER (WITH 3 RETRIES)
+    for attempt in range(1, 4):
+        try:
+            print(f"Weather Sync Attempt {attempt}/3...")
+            harvest_weather_data(unified_ts)
+            results["Weather"] = True
+            print("Successfully logged weather data.")
+            break
+        except Exception as e:
+            errors["Weather"] = str(e)
+            if attempt < 3:
+                print(f"Attempt {attempt} failed: {e}. Retrying in 10s...")
+                await asyncio.sleep(10)
+            else:
+                print(f"All 3 weather attempts failed. Final error: {e}")
 
     # 5. LOG TO HISTORICAL EXECUTION CSV
     status_row = {
@@ -92,7 +114,27 @@ async def main():
     pd.DataFrame([status_row]).to_csv(status_file, mode='a', 
                                      header=not os.path.exists(status_file), index=False)
 
-    # 6. WRITE GITHUB STEP SUMMARY (MARKDOWN TABLE)
+    # 6. DECIDE WHETHER TO ALERT
+    # Single failures are normal (iAquaLink is flaky) and heal on the next run,
+    # so only alert once a service has been down for several runs in a row.
+    alerts = []
+    try:
+        df_status = pd.read_csv(status_file)
+        for service, column in (("Pool", 'pool_status'), ("Weather", 'weather_status')):
+            streak = consecutive_failures(df_status, column)
+            if streak >= ALERT_THRESHOLD and (streak - ALERT_THRESHOLD) % ALERT_REPEAT == 0:
+                alerts.append(f"{service} has failed {streak} runs in a row. Last error: {errors[service]}")
+    except Exception as e:
+        print(f"Alert check failed: {e}")
+
+    for alert in alerts:
+        print(f"ALERT: {alert}")
+    github_output = os.environ.get('GITHUB_OUTPUT')
+    if github_output:
+        with open(github_output, 'a') as f:
+            f.write(f"alert={'true' if alerts else 'false'}\n")
+
+    # 7. WRITE GITHUB STEP SUMMARY (MARKDOWN TABLE)
     with open("job_summary.md", "w") as f:
         f.write("## 🚀 Telemetry Run Summary\n")
         f.write(f"**Current Run:** `{unified_ts}`\n")
@@ -106,6 +148,11 @@ async def main():
         weather_icon = '✅ OK' if results["Weather"] else '❌ FAILED'
         weather_details = "Synchronized" if results["Weather"] else errors["Weather"]
         f.write(f"| Weather Data | {weather_icon} | {weather_details} |\n")
+
+        if alerts:
+            f.write("\n### ⚠️ Alerts\n")
+            for alert in alerts:
+                f.write(f"- {alert}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
