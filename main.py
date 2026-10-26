@@ -25,7 +25,7 @@ def consecutive_failures(df_status, column):
 
 async def main():
     # 1. SETUP TIMEZONES AND CURRENT TIME
-    # GitHub Runners use UTC by default, so we must be explicit for Rolling Hills Estates (PST)
+    # GitHub Runners use UTC by default, so we must be explicit about Pacific time
     pacific_tz = pytz.timezone('America/Los_Angeles')
     now = datetime.now(pacific_tz)
     unified_ts = now.strftime("%Y-%m-%d %H:%M:%S")

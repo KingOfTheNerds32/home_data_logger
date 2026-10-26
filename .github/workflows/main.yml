@@ -1,4 +1,4 @@
-name: iAquaLink Pool & Weather Logger
+name: Pool & Weather Logger
 
 on:
   repository_dispatch:
@@ -21,6 +21,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # Data lives in a separate private repo so this public repo holds only code.
+      - name: Checkout Private Data Repo
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
+          git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
+
+      # One-time migration of the CSV history that used to live in this repo.
+      - name: Migrate Old Data
+        run: python3 migrate_data.py data
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -40,23 +52,27 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           LAT: ${{ secrets.LAT }}
           LONG: ${{ secrets.LONG }}
-        run: python main.py
+        working-directory: data
+        run: python ../main.py
 
       - name: Generate Job Summary
         # This makes the table appear on the Action run page
         if: always()
-        run: cat job_summary.md >> $GITHUB_STEP_SUMMARY || echo "No summary generated" >> $GITHUB_STEP_SUMMARY
+        run: cat data/job_summary.md >> $GITHUB_STEP_SUMMARY || echo "No summary generated" >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and Push Data
         if: always()
+        working-directory: data
         run: |
           git config --global user.name "PoolBot"
           git config --global user.email "poolbot@github.com"
           git add *.csv
           git commit -m "Telemetry Update: $(date)" || exit 0
-          # Rebase onto anything pushed meanwhile (e.g. code changes) and retry.
+          # Rebase onto anything pushed meanwhile and retry. The pull fails
+          # harmlessly on the very first push, before main exists remotely.
           for attempt in 1 2 3 4; do
-            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            git pull --rebase origin main 2>/dev/null || true
+            git push origin HEAD:main && exit 0
             git rebase --abort 2>/dev/null || true
             sleep $((attempt * 5))
           done

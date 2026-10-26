@@ -17,7 +17,8 @@ import httpx
 import pytz
 from iaqualink.client import AqualinkClient
 
-SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snapshots')
+# Snapshots go to the private data repo in CI (SNAPSHOT_DIR); local default otherwise.
+SNAPSHOT_DIR = os.environ.get('SNAPSHOT_DIR') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snapshots')
 
 # Read-only session commands. get_home / get_devices are what the library
 # parses (minus the nested fields it drops); get_onetouch is captured too.
