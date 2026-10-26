@@ -2,7 +2,8 @@
 Enphase API probe (read-only): tries every candidate endpoint once to learn
 which ones this app's plan allows and what shape of data each returns.
 
-- Full responses go to probe_results/ in the private data repo (cwd).
+- Responses go to probe_results/ in the private data repo (cwd), with
+  personal fields (name, address, ...) removed and identifiers masked.
 - The public run summary (probe_summary.md) lists only status codes, field
   names and interval counts/spans, never values or identifiers.
 
@@ -20,6 +21,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import energy_logger as E  # noqa: E402
 
 OUT_DIR = 'probe_results'
+
+
+# Personal fields dropped before anything is saved, and identifiers masked.
+PERSONAL_KEYS = {'name', 'public_name', 'address', 'owner', 'email', 'phone', 'nmi', 'reference'}
+IDENTIFIER_KEYS = {'serial_number', 'id', 'system_id'}
+
+
+def strip_personal(obj):
+    if isinstance(obj, dict):
+        return {k: ('<masked>' if k in IDENTIFIER_KEYS else strip_personal(v))
+                for k, v in obj.items() if k not in PERSONAL_KEYS}
+    if isinstance(obj, list):
+        return [strip_personal(v) for v in obj]
+    return E.redact(obj) if isinstance(obj, str) else obj
 
 
 def schema(obj, depth=0):
@@ -98,7 +113,8 @@ def main():
         except ValueError:
             body = {'_non_json': r.text[:500]}
         with open(os.path.join(OUT_DIR, f"{name}.json"), 'w') as f:
-            json.dump({'path': path, 'params': params, 'status': r.status_code, 'body': body}, f, indent=2)
+            json.dump({'path': E.redact(path), 'params': params, 'status': r.status_code,
+                       'body': strip_personal(body)}, f, indent=2)
         detail = interval_span(body) or lifetime_span(body) if r.status_code == 200 else ''
         results.append((name, shown_path or path.replace(system_id, '{id}'), r.status_code, detail, schema(body)))
         return body if r.status_code == 200 else None

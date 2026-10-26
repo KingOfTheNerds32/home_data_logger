@@ -7,7 +7,7 @@ Files written (in the data repo checkout, the working directory):
   production_5min.csv  5-min solar production (going forward only)
   ev_sessions.csv      EV charging sessions with energy, miles and cost
   energy_daily.csv     daily totals since the system was installed
-  enphase_state.json   request budget, EV charger serial, backfill progress
+  enphase_state.json   request budget and backfill progress
 
 The free plan allows 1,000 requests a month, so requests are counted and the
 history backfill (a week per request, newest first) only uses what the daily
@@ -151,6 +151,7 @@ class Enphase:
         self.state = state
         self.month = datetime.now(PACIFIC).strftime('%Y-%m')
         self.used_this_run = 0
+        self.ev_serial = None
 
     @property
     def used_this_month(self):
@@ -225,7 +226,7 @@ def fetch_telemetry(api, start, granularity, include_ev):
     rows = {}
     sources = [(f"/{endpoint}", columns) for endpoint, columns in TELEMETRY]
     if include_ev:
-        sources.append((f"/ev_charger/{api.state['ev_serial']}/telemetry", EV_COLUMNS))
+        sources.append((f"/ev_charger/{api.ev_serial}/telemetry", EV_COLUMNS))
     for path, columns in sources:
         payload = api.get(path, params, optional=True)
         if payload is None:
@@ -239,13 +240,20 @@ def fetch_telemetry(api, start, granularity, include_ev):
 
 
 def find_ev_charger(api):
-    """Look up (once) the EV charger's serial number, needed for its endpoints."""
-    if 'ev_serial' not in api.state:
+    """The EV charger's serial number, needed for its endpoints.
+
+    Kept in the ENPHASE_EV_SERIAL secret rather than the data repo, so no
+    device identifiers are stored with the data. Looked up once if missing;
+    'none' records that there is no charger.
+    """
+    serial = os.environ.get('ENPHASE_EV_SERIAL')
+    if not serial:
         payload = api.get('/ev_charger/devices', optional=True) or {}
         devices = payload.get('devices') or {}
         chargers = devices.get('ev_chargers', []) if isinstance(devices, dict) else devices
-        api.state['ev_serial'] = chargers[0].get('serial_number') if chargers else None
-    return api.state['ev_serial']
+        serial = (chargers[0].get('serial_number') if chargers else None) or 'none'
+        save_secret('ENPHASE_EV_SERIAL', serial)
+    api.ev_serial = None if serial == 'none' else serial
 
 
 def catch_up(api, today):
@@ -258,7 +266,7 @@ def catch_up(api, today):
         day = max(local_midnight(last), today - timedelta(days=MAX_CATCHUP_DAYS))
     rows, micro = [], []
     while day < today:
-        rows += fetch_telemetry(api, day, 'day', bool(api.state.get('ev_serial')))
+        rows += fetch_telemetry(api, day, 'day', bool(api.ev_serial))
         payload = api.get('/telemetry/production_micro',
                           {'granularity': 'day', 'start_at': int(day.timestamp())}, optional=True)
         for interval in intervals(payload or {}):
@@ -271,9 +279,9 @@ def catch_up(api, today):
 
 def update_sessions(api):
     """Store EV sessions; the endpoint returns the most recent 20."""
-    if not api.state.get('ev_serial'):
+    if not api.ev_serial:
         return
-    payload = api.get(f"/ev_charger/{api.state['ev_serial']}/sessions", optional=True) or {}
+    payload = api.get(f"/ev_charger/{api.ev_serial}/sessions", optional=True) or {}
     rows = [{'start_time': to_local(s['start_time']), 'end_time': to_local(s['end_time']),
              'duration_s': s.get('duration'), 'charge_time_s': s.get('charge_time'),
              'energy_kwh': s.get('energy_added'), 'miles_added': s.get('miles_added'), 'cost': s.get('cost')}
@@ -308,7 +316,7 @@ def backfill(api):
     if not api.state.get('history_start') or not os.path.exists(DATA_FILE):
         return
     history_start = PACIFIC.localize(datetime.strptime(api.state['history_start'], '%Y-%m-%d'))
-    per_week = len(TELEMETRY) + (1 if api.state.get('ev_serial') and not api.state.get('ev_history_done') else 0)
+    per_week = len(TELEMETRY) + (1 if api.ev_serial and not api.state.get('ev_history_done') else 0)
     rows, weeks, run_start = [], 0, api.used_this_run
     while True:
         earliest = local_midnight(datetime.strptime(
@@ -354,6 +362,7 @@ def harvest_energy_data():
     save_secret('ENPHASE_REFRESH_TOKEN', tokens['refresh_token'])
 
     state = load_state()
+    state.pop('ev_serial', None)  # now kept in the ENPHASE_EV_SERIAL secret
     api = Enphase(system_id, tokens['access_token'], state)
     today = local_midnight(datetime.now(PACIFIC))
     try:
