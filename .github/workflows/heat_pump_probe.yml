@@ -1,0 +1,58 @@
+name: Heat Pump Probe
+
+# Manual-only side experiment; see investigation/heat_pump/README.md
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Scenario label (e.g. both_off, hp_on, gas_on, both_on)'
+        required: true
+
+permissions:
+  contents: write
+
+# Share the main logger's queue so the two never push at the same moment.
+concurrency:
+  group: telemetry
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install pytz httpx iaqualink==0.6.0
+
+      - name: Capture Snapshot
+        env:
+          IQUALINK_USER: ${{ secrets.IQUALINK_USER }}
+          IQUALINK_PASS: ${{ secrets.IQUALINK_PASS }}
+          SCENARIO: ${{ inputs.scenario }}
+        run: python investigation/heat_pump/probe.py "$SCENARIO"
+
+      - name: Generate Job Summary
+        run: cat probe_summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and Push Snapshot
+        run: |
+          git config --global user.name "PoolBot"
+          git config --global user.email "poolbot@github.com"
+          git add investigation/heat_pump/snapshots
+          git commit -m "Heat pump probe: $SCENARIO" || exit 0
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 5))
+          done
+          exit 1
+        env:
+          SCENARIO: ${{ inputs.scenario }}
