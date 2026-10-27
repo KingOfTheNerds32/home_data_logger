@@ -5,8 +5,11 @@ on:
     types: [poll-pool]
   workflow_dispatch:
 
+# Data is pushed to home_data with DATA_REPO_TOKEN, so this repo only needs
+# read access, plus actions: write for the daily keep-enabled step below.
 permissions:
-  contents: write
+  contents: read
+  actions: write
 
 # Overlapping runs would race on the CSVs and the push, so queue them instead.
 concurrency:
@@ -86,3 +89,19 @@ jobs:
         run: |
           echo "::error::Telemetry needs attention - see the run summary for details"
           exit 1
+
+      # Backup for the watchdog's keep-enabled step: GitHub disables scheduled
+      # workflows in public repos after 60 days without commits, but this
+      # workflow is triggered externally and is never disabled. Once a day,
+      # re-enable the scheduled ones. Never fails the logging run.
+      - name: Keep Scheduled Workflows Enabled
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "$(date -u +%H)" = "12" ] && [ "$(date -u +%M)" -lt 10 ] || exit 0
+          for wf in energy.yml watchdog.yml; do
+            curl -sS -f -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$wf/enable" && echo "Enabled $wf"
+          done
