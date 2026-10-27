@@ -7,6 +7,7 @@ Files written (in the data repo checkout, the working directory):
   production_5min.csv  5-min solar production (going forward only)
   ev_sessions.csv      EV charging sessions with energy, miles and cost
   energy_daily.csv     daily totals since the system was installed
+  battery_days.csv     inferred daily battery mode (normal / storm_hold)
   enphase_state.json   request budget and backfill progress
 
 The free plan allows 1,000 requests a month, so requests are counted and the
@@ -43,6 +44,7 @@ MICRO_FILE = 'production_5min.csv'
 SESSIONS_FILE = 'ev_sessions.csv'
 DAILY_FILE = 'energy_daily.csv'
 STATE_FILE = 'enphase_state.json'
+BATTERY_DAYS_FILE = 'battery_days.csv'
 PACIFIC = pytz.timezone('America/Los_Angeles')
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -345,6 +347,46 @@ def backfill(api):
         print(f"Backfill: {weeks} week(s), now back to {min(r['interval_end'] for r in rows)[:10]}")
 
 
+def label_battery_days():
+    """Infer each day's battery mode from its behavior (no API requests).
+
+    Enphase's free plan can't read the battery settings, so classify from the
+    15-min data: 'storm_hold' when the battery stays full through the evening
+    instead of discharging (Storm Guard / full backup), otherwise 'normal'.
+    Also records how much it charged from the grid and how much the house
+    imported during the 5-8 PM peak.
+    """
+    if not os.path.exists(DATA_FILE):
+        return
+    d = pd.read_csv(DATA_FILE)
+    if 'battery_soc_pct' not in d:
+        return
+    d['start'] = pd.to_datetime(d['interval_end']) - pd.Timedelta(minutes=15)
+    d['date'] = d['start'].dt.strftime('%Y-%m-%d')
+    hour = d['start'].dt.hour
+    rows = []
+    for date, g in d.groupby('date'):
+        if len(g) < 90:
+            continue  # incomplete day
+        evening = g[hour[g.index] >= 17]
+        peak = g[(hour[g.index] >= 17) & (hour[g.index] < 20)]
+        soc_5pm = g.loc[hour[g.index] == 17, 'battery_soc_pct'].iloc[0]
+        evening_discharge_kwh = evening['battery_discharge_wh'].sum() / 1000
+        held = soc_5pm >= 95 and evening_discharge_kwh < 1 and evening['battery_soc_pct'].min() >= 90
+        rows.append({
+            'date': date,
+            'mode': 'storm_hold' if held else 'normal',
+            'soc_5pm': soc_5pm,
+            'min_soc': g['battery_soc_pct'].min(),
+            'evening_discharge_kwh': round(evening_discharge_kwh, 2),
+            # Battery charging beyond what solar produced came from the grid.
+            'grid_charge_kwh': round((g['battery_charge_wh'] - g['production_wh']).clip(lower=0).sum() / 1000, 2),
+            'peak_import_kwh': round(peak['grid_import_wh'].sum() / 1000, 2),
+        })
+    pd.DataFrame(rows).to_csv(BATTERY_DAYS_FILE, index=False)
+    print(f"Battery days: {len(rows)} labeled, {sum(r['mode'] == 'storm_hold' for r in rows)} storm-hold")
+
+
 def harvest_energy_data():
     refresh_token = os.environ.get('ENPHASE_REFRESH_TOKEN')
     system_id = os.environ.get('ENPHASE_SYSTEM_ID')
@@ -371,6 +413,7 @@ def harvest_energy_data():
         update_sessions(api)
         update_daily_totals(api, today)
         backfill(api)
+        label_battery_days()
     finally:
         save_state(state)
         print(f"Requests: {api.used_this_run} this run, {api.used_this_month} this month (budget {MONTHLY_BUDGET})")
