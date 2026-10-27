@@ -7,7 +7,7 @@ which ones this app's plan allows and what shape of data each returns.
 - The public run summary (probe_summary.md) lists only status codes, field
   names and interval counts/spans, never values or identifiers.
 
-Usage (from the data repo checkout): python ../investigation/enphase/probe.py [ev]
+Usage (from the data repo checkout): python ../investigation/enphase/probe.py [ev|config]
 """
 import json
 import os
@@ -100,6 +100,11 @@ def main():
         ('import_lifetime', f"{s}/energy_import_lifetime", None),
         ('export_lifetime', f"{s}/energy_export_lifetime", None),
         ('ev_charger_devices', f"{s}/ev_charger/devices", None),
+        # System configuration (battery profile, reserve, Storm Guard).
+        ('config_battery_settings', f"/systems/config/{system_id}/battery_settings", None),
+        ('config_storm_guard', f"/systems/config/{system_id}/storm_guard", None),
+        ('config_grid_status', f"/systems/config/{system_id}/grid_status", None),
+        ('config_load_control', f"/systems/config/{system_id}/load_control", None),
     ]
 
     results = []
@@ -120,8 +125,11 @@ def main():
         return body if r.status_code == 200 else None
 
     # "python probe.py ev" re-runs only the EV charger calls (~4 requests).
+    # "python probe.py config" runs only the system configuration calls (~4).
     if 'ev' in sys.argv[1:]:
         candidates = [c for c in candidates if c[0] == 'ev_charger_devices']
+    elif 'config' in sys.argv[1:]:
+        candidates = [c for c in candidates if c[0].startswith('config_')]
 
     for name, path, params in candidates:
         body = probe(name, path, params)

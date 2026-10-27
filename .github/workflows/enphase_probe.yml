@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'Leave blank for all endpoints, or "ev" for just the EV charger'
+        description: 'Leave blank for all endpoints, "ev" for the EV charger, or "config" for battery settings'
         required: false
         default: ''
 
