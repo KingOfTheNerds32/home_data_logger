@@ -4,7 +4,7 @@ charger data from the Enphase v4 cloud API into the private data repo.
 
 Files written (in the data repo checkout, the working directory):
   energy_history.csv   15-min production, consumption, battery, grid, EV charging
-  production_5min.csv  5-min solar production (going forward only)
+  production_5min.csv  5-min solar production and microinverters reporting
   ev_sessions.csv      EV charging sessions with energy, miles and cost
   energy_daily.csv     daily totals since the system was installed
   battery_days.csv     inferred daily battery mode (normal / storm_hold)
@@ -273,7 +273,8 @@ def catch_up(api, today):
                           {'granularity': 'day', 'start_at': int(day.timestamp())}, optional=True)
         for interval in intervals(payload or {}):
             micro.append({'interval_end': to_local(interval['end_at']),
-                          'production_wh': interval.get('enwh'), 'power_w': interval.get('powr')})
+                          'production_wh': interval.get('enwh'), 'power_w': interval.get('powr'),
+                          'devices_reporting': interval.get('devices_reporting')})
         day = local_midnight(day + timedelta(days=1, hours=2))
     print(f"Daily pull: {merge_csv(DATA_FILE, rows, 'interval_end')} 15-min and "
           f"{merge_csv(MICRO_FILE, micro, 'interval_end')} 5-min intervals")

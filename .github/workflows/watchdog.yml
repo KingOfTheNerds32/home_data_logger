@@ -49,5 +49,5 @@ jobs:
       - name: Check Data Freshness
         working-directory: data
         run: |
-          pip install -q pytz
+          pip install -q pytz pandas
           python ../watchdog.py
