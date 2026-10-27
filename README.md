@@ -24,6 +24,10 @@ code; all data is written to the private `home_data` repo.
   usage is tracked in `enphase_state.json` and capped at 850).
 - **Enphase Authorize** (`enphase_authorize.yml`) is a one-time setup, rerun
   only if Enphase authorization lapses.
+- **Data Watchdog** (`watchdog.yml`) runs every 4 hours and fails (emailing you) if
+  pool/weather data is over 45 minutes old or energy data over ~2 days old. It
+  also re-enables the scheduled workflows, which GitHub otherwise disables in a
+  public repo after 60 days without commits.
 - **Heat Pump Probe** (`heat_pump_probe.yml`) is a manual diagnostic; see
   `investigation/heat_pump/README.md`.
 
