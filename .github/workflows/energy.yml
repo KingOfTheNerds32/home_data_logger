@@ -63,7 +63,7 @@ jobs:
           [ -d .git ] || exit 0
           git config --global user.name "PoolBot"
           git config --global user.email "poolbot@github.com"
-          for f in energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv enphase_state.json; do
+          for f in energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
           git commit -m "Energy Update: $(date)" || exit 0

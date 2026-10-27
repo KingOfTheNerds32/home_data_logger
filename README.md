@@ -12,6 +12,7 @@ code; all data is written to the private `home_data` repo.
 | Solar production (Enphase) | `energy_logger.py` | `production_5min.csv` | Daily, 5-min intervals |
 | EV charging sessions (Enphase) | `energy_logger.py` | `ev_sessions.csv` | Daily |
 | Daily energy totals since install (Enphase) | `energy_logger.py` | `energy_daily.csv` | Weekly refresh |
+| Inferred battery mode per day (normal / storm_hold) | `energy_logger.py` | `battery_days.csv` | Daily (no API calls) |
 
 ## How it runs
 
@@ -28,6 +29,8 @@ code; all data is written to the private `home_data` repo.
   pool/weather data is over 45 minutes old or energy data over ~2 days old. It
   also re-enables the scheduled workflows, which GitHub otherwise disables in a
   public repo after 60 days without commits.
+- **Lennox Probe** (`lennox_probe.yml`) is a manual, read-only diagnostic for the
+  iComfort thermostats; see `investigation/lennox/probe.py`.
 - **Heat Pump Probe** (`heat_pump_probe.yml`) is a manual diagnostic; see
   `investigation/heat_pump/README.md`.
 
