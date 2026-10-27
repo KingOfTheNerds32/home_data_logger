@@ -1,7 +1,9 @@
 """
 Watchdog: fails if any data source has gone stale, so GitHub's failure email
 catches problems that produce no failed runs at all (e.g. the external
-cron-job.org trigger stopping, or an expired token).
+cron-job.org trigger stopping, or an expired token). Also fails if fewer
+microinverters reported at midday than normal, which means part of the solar
+array is offline (as happened for two months in spring 2026).
 
 Runs inside the private data repo checkout. Prints only ages and OK/STALE,
 never data values, because run logs on the public repo are visible to anyone.
@@ -12,6 +14,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 
+import pandas as pd
 import pytz
 
 PACIFIC = pytz.timezone('America/Los_Angeles')
@@ -39,6 +42,30 @@ def newest_timestamp(path, column):
     return PACIFIC.localize(datetime.strptime(max(values), "%Y-%m-%d %H:%M:%S"))
 
 
+def check_microinverters():
+    """Midday microinverter count on the latest complete day vs the usual count.
+
+    Returns (status line, problem or None). The expected count is the most
+    ever seen reporting, so it adapts if panels are added.
+    """
+    path = 'production_5min.csv'
+    if not os.path.exists(path):
+        return "| Microinverters | no data yet | | ⏳ |", None
+    d = pd.read_csv(path)
+    if 'devices_reporting' not in d or d['devices_reporting'].dropna().empty:
+        return "| Microinverters | not recorded yet | | ⏳ |", None
+    d['t'] = pd.to_datetime(d['interval_end'])
+    expected = int(d['devices_reporting'].max())
+    latest_day = d['t'].max().normalize() - pd.Timedelta(days=1) if d['t'].max().hour == 0 else d['t'].max().normalize()
+    midday = d[(d['t'].dt.normalize() == latest_day) & d['t'].dt.hour.between(10, 13)]
+    if midday.empty:
+        return "| Microinverters | no midday data | | ⏳ |", None
+    reporting = int(midday['devices_reporting'].max())
+    ok = reporting >= expected
+    line = f"| Microinverters | {latest_day:%Y-%m-%d} midday | {reporting} of {expected} | {'✅ OK' if ok else '❌ OFFLINE'} |"
+    return line, None if ok else f"only {reporting} of {expected} microinverters reporting on {latest_day:%Y-%m-%d}"
+
+
 def main():
     now = datetime.now(PACIFIC)
     stale = []
@@ -61,13 +88,21 @@ def main():
             stale.append(path)
         lines.append(f"| `{path}` | {newest:%Y-%m-%d %H:%M} | {hours:.1f} h | {'✅ OK' if ok else '❌ STALE'} |")
 
+    try:
+        line, problem = check_microinverters()
+    except Exception as e:
+        line, problem = f"| Microinverters | unreadable ({type(e).__name__}) | | ❌ |", "microinverter data unreadable"
+    lines.append(line)
+    if problem:
+        stale.append(problem)
+
     summary = "\n".join(lines) + "\n"
     print(summary)
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
             f.write(summary)
     if stale:
-        print(f"::error::Stale data: {', '.join(stale)}")
+        print(f"::error::Problems: {', '.join(stale)}")
         sys.exit(1)
 
 
