@@ -50,9 +50,10 @@ TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # How far back the daily pull fills gaps if runs were missed.
 MAX_CATCHUP_DAYS = 7
-# The free plan allows 10 requests per minute and 1,000 per month. The daily
+# The free plan allows 10 requests per minute and 1,000 per month; 10 s
+# spacing keeps us at 6/min, clear of the 80% (8/min) warning. The daily
 # routine uses ~8 a day; the backfill stops once the month reaches the budget.
-REQUEST_SPACING_SECONDS = 7
+REQUEST_SPACING_SECONDS = 10
 MONTHLY_BUDGET = 850
 BACKFILL_REQUESTS_PER_RUN = 20
 
