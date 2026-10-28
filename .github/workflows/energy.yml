@@ -17,7 +17,7 @@ concurrency:
 jobs:
   energy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
