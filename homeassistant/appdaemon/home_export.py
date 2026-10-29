@@ -55,6 +55,9 @@ class HomeExport(hass.Hass):
         self.run_every(self.sample, first, self.interval * 60)
         self.run_daily(self.upload_finished_days, '00:20:00')
 
+        # Record where every watched entity starts, so on/off spans are known
+        # from the first minute rather than from its first change.
+        self.run_in(self.record_watched, 5)
         self.run_in(self.upload_entity_list, 30)
         self.run_in(self.upload_finished_days, 60)
         self.log(f"Sampling {len(self.sampled)} entities every {self.interval} min; "
@@ -91,6 +94,13 @@ class HomeExport(hass.Hass):
         for entity_id in self.sampled:
             rows += self.rows_for(entity_id, states.get(entity_id))
         self.write(now, rows)
+
+    def record_watched(self, kwargs):
+        states = self.get_state()
+        rows = []
+        for entity_id in self.watched:
+            rows += self.rows_for(entity_id, states.get(entity_id))
+        self.write(self.datetime().replace(microsecond=0), rows)
 
     def changed(self, entity_id, attribute, old, new, kwargs):
         # attribute='all' also fires on unrelated attribute updates; only
