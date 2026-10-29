@@ -1,0 +1,30 @@
+# AppDaemon app configuration for the Home Assistant -> home_data exporter.
+# Copy into the AppDaemon add-on's apps/apps.yaml (see homeassistant/README.md).
+home_export:
+  module: home_export
+  class: HomeExport
+  github_token: !secret github_home_data_token
+  repo: KingOfTheNerds32/home_data
+  folder: ha
+  interval_minutes: 15
+  # Entity id patterns to record (* = wildcard). ha/entities.txt in home_data
+  # lists every entity and marks the exported ones, to help tune these.
+  include:
+    - "sensor.envoy_*"        # gateway totals: production, consumption, grid, battery
+    - "sensor.inverter_*"     # per-panel microinverter output
+    - "sensor.*battery*"      # battery state of charge / power
+    - "sensor.*encharge*"
+    - "climate.*"             # Lennox zones (+ temperature, set point, heating/cooling)
+    - "sensor.*outdoor_temperature*"
+    - "sensor.*flume*"        # water
+    - "sensor.pool_temp"
+    - "sensor.spa_temp"
+    - "sensor.air_temp"
+    - "switch.pool_pump"
+    - "switch.spa_pump"
+    - "switch.pool_heater"
+    - "switch.spa_heater"
+    - "switch.spillover"
+  exclude:
+    - "*_alert*"
+    - "*wt_env*"
