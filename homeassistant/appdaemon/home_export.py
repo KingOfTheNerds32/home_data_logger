@@ -1,20 +1,23 @@
 """
 Home Assistant -> home_data exporter (AppDaemon app).
 
-Every `interval_minutes` it records the state of matching entities (plus the
-useful attributes of climate entities) to a local daily CSV, and once a day it
-uploads finished days to the private home_data repo via the GitHub API.
-Uploads that fail are retried on the next run, so no day is lost.
+Records two kinds of data to a local daily CSV:
+- `on_change` entities (zone heating/cooling, switches, battery mode, ...):
+  a row every time they change, with the exact time, so run times are exact.
+- `sample` entities (power, temperature, ...): a snapshot every
+  `interval_minutes` minutes, aligned to the clock.
 
-On startup it also uploads ha/entities.txt: a list of entity ids (no values),
-so the include patterns can be tuned without guessing.
+Once a day it uploads finished days, gzip-compressed, to the private
+home_data repo via the GitHub API; uploads that fail are retried on the next run, so no day is lost.
+On startup it also uploads ha/entities.txt: every entity id (no values),
+marked `s` (sampled) or `c` (on change), to help tune the patterns.
 
-Uses only the Python standard library. Configure in apps.yaml; see
-homeassistant/README.md.
+Standard library only. Configured in apps.yaml; see homeassistant/README.md.
 """
 import base64
 import csv
 import fnmatch
+import gzip
 import json
 import os
 import urllib.error
@@ -23,7 +26,7 @@ from datetime import timedelta
 
 import appdaemon.plugins.hass.hassapi as hass
 
-# Climate attributes worth keeping alongside each zone's state.
+# Climate attributes recorded alongside each zone's state.
 CLIMATE_ATTRIBUTES = ['current_temperature', 'current_humidity', 'hvac_action',
                       'temperature', 'target_temp_low', 'target_temp_high']
 
@@ -31,17 +34,21 @@ CLIMATE_ATTRIBUTES = ['current_temperature', 'current_humidity', 'hvac_action',
 class HomeExport(hass.Hass):
 
     def initialize(self):
-        self.include = self.args.get('include', [])
         self.exclude = self.args.get('exclude', [])
-        self.interval = int(self.args.get('interval_minutes', 15))
+        self.interval = int(self.args.get('interval_minutes', 5))
         self.repo = self.args.get('repo', 'KingOfTheNerds32/home_data')
         self.folder = self.args.get('folder', 'ha')
         self.token = self.args['github_token']
         self.data_dir = os.path.join(os.path.dirname(self.app_dir), 'home_export')
         os.makedirs(self.data_dir, exist_ok=True)
 
-        # Sample on clock-aligned intervals (:00, :15, ...). AppDaemon's clock
-        # uses the time_zone in appdaemon.yaml, not the container's.
+        self.sampled = self.matching(self.args.get('sample', []))
+        self.watched = [e for e in self.matching(self.args.get('on_change', [])) if e not in self.sampled]
+        for entity_id in self.watched:
+            self.listen_state(self.changed, entity_id, attribute='all')
+
+        # Snapshots on clock-aligned intervals (:00, :05, ...). AppDaemon's
+        # clock uses the time_zone in appdaemon.yaml, not the container's.
         now = self.datetime()
         first = now.replace(second=0, microsecond=0) + timedelta(
             minutes=self.interval - now.minute % self.interval)
@@ -50,31 +57,47 @@ class HomeExport(hass.Hass):
 
         self.run_in(self.upload_entity_list, 30)
         self.run_in(self.upload_finished_days, 60)
-        self.log(f"Exporting {len(self.matching_entities())} entities every {self.interval} min")
+        self.log(f"Sampling {len(self.sampled)} entities every {self.interval} min; "
+                 f"recording every change of {len(self.watched)}")
 
-    def matching_entities(self):
+    def matching(self, patterns):
         ids = sorted(self.get_state().keys())
-        keep = [e for e in ids if any(fnmatch.fnmatch(e, p) for p in self.include)]
+        keep = [e for e in ids if any(fnmatch.fnmatch(e, p) for p in patterns)]
         return [e for e in keep if not any(fnmatch.fnmatch(e, p) for p in self.exclude)]
 
-    def sample(self, kwargs):
-        now = self.datetime()
-        states = self.get_state()
-        rows = []
-        for entity_id in self.matching_entities():
-            state = states.get(entity_id) or {}
-            rows.append((entity_id, '', state.get('state')))
-            if entity_id.startswith('climate.'):
-                attrs = state.get('attributes', {})
-                rows += [(entity_id, a, attrs.get(a)) for a in CLIMATE_ATTRIBUTES if a in attrs]
-        path = os.path.join(self.data_dir, f"{now:%Y-%m-%d}.csv")
+    @staticmethod
+    def rows_for(entity_id, state):
+        state = state or {}
+        rows = [(entity_id, '', state.get('state'))]
+        if entity_id.startswith('climate.'):
+            attrs = state.get('attributes', {})
+            rows += [(entity_id, a, attrs.get(a)) for a in CLIMATE_ATTRIBUTES if a in attrs]
+        return rows
+
+    def write(self, when, rows):
+        path = os.path.join(self.data_dir, f"{when:%Y-%m-%d}.csv")
         new = not os.path.exists(path)
         with open(path, 'a', newline='') as f:
             writer = csv.writer(f)
             if new:
                 writer.writerow(['timestamp', 'entity_id', 'attribute', 'value'])
-            ts = f"{now:%Y-%m-%d %H:%M:00}"
+            ts = f"{when:%Y-%m-%d %H:%M:%S}"
             writer.writerows((ts, e, a, v) for e, a, v in rows)
+
+    def sample(self, kwargs):
+        now = self.datetime().replace(microsecond=0)
+        states = self.get_state()
+        rows = []
+        for entity_id in self.sampled:
+            rows += self.rows_for(entity_id, states.get(entity_id))
+        self.write(now, rows)
+
+    def changed(self, entity_id, attribute, old, new, kwargs):
+        # attribute='all' also fires on unrelated attribute updates; only
+        # record when something we track actually changed.
+        rows = self.rows_for(entity_id, new)
+        if rows != self.rows_for(entity_id, old):
+            self.write(self.datetime().replace(microsecond=0), rows)
 
     def upload_finished_days(self, kwargs):
         today = f"{self.datetime():%Y-%m-%d}.csv"
@@ -83,16 +106,18 @@ class HomeExport(hass.Hass):
                 continue  # today's file is still being written
             path = os.path.join(self.data_dir, name)
             with open(path, 'rb') as f:
-                content = f.read()
-            if self.put_file(f"{self.folder}/{name[:7]}/{name}", content, f"HA export {name[:-4]}"):
+                # Compressed ~8x; pandas reads .csv.gz directly.
+                content = gzip.compress(f.read(), mtime=0)
+            if self.put_file(f"{self.folder}/{name[:7]}/{name}.gz", content, f"HA export {name[:-4]}"):
                 os.rename(path, path + '.uploaded')
 
     def upload_entity_list(self, kwargs):
         ids = sorted(self.get_state().keys())
-        exported = set(self.matching_entities())
-        lines = [f"{'*' if e in exported else ' '} {e}" for e in ids]
-        body = ("# All Home Assistant entities; * = currently exported\n" + "\n".join(lines) + "\n").encode()
-        self.put_file(f"{self.folder}/entities.txt", body, "HA entity list")
+        mark = lambda e: 's' if e in self.sampled else 'c' if e in self.watched else ' '
+        lines = [f"{mark(e)} {e}" for e in ids]
+        header = "# All Home Assistant entities; s = sampled, c = recorded on change\n"
+        self.put_file(f"{self.folder}/entities.txt", (header + "\n".join(lines) + "\n").encode(),
+                      "HA entity list")
 
     def put_file(self, path, content, message):
         """Create or replace a file in the repo. Returns True on success."""

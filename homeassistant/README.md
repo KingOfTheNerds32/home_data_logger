@@ -3,26 +3,35 @@
 Home Assistant OS runs on a Raspberry Pi 4 on the home network. It adds data
 the cloud loggers can't get: per-panel solar, Lennox HVAC zones, Flume water.
 
-## Exporter (`appdaemon/`)
+## Apps (`appdaemon/`)
 
-An AppDaemon app records selected entities every 15 minutes and uploads one
-CSV per day to the private `home_data` repo at `ha/YYYY-MM/YYYY-MM-DD.csv`
-(long format: `timestamp, entity_id, attribute, value`). It also uploads
-`ha/entities.txt`, listing all entity ids with `*` marking exported ones.
+Two AppDaemon apps run in the AppDaemon add-on:
+
+- **`home_export`** records selected entities to a local daily CSV:
+  readings in `sample` every 5 minutes, and states in `on_change` every time
+  they change (exact run times for HVAC zones, pool equipment, battery mode,
+  grid status). Each night it uploads finished days, gzip-compressed, to the
+  private `home_data` repo at `ha/YYYY-MM/YYYY-MM-DD.csv.gz` (long format:
+  `timestamp, entity_id, attribute, value`), retrying failed days. It also
+  uploads `ha/entities.txt` listing all entity ids, marked `s` (sampled) or
+  `c` (on change).
+- **`updater`** checks this repo every 30 minutes and pulls new versions of
+  `apps.yaml` and `home_export.py` from `main`, which AppDaemon then reloads.
+  **Changes deploy by merging to `main`.** The updater never updates itself or
+  `secrets.yaml`.
 
 ### Setup (all in the Home Assistant web UI)
 
-1. **GitHub token:** create a fine-grained token with access to only
-   `home_data`, permission **Contents: Read and write**.
-2. **Install add-ons** (Settings → Add-ons/Apps → Store): **AppDaemon** and
-   **File editor**. In File editor's Configuration, turn off
-   **Enforce basepath**, then start both.
-3. In File editor, open `/addon_configs/a0d7b954_appdaemon/`:
-   - `apps/home_export.py`: paste `appdaemon/home_export.py` from this repo
-   - `apps/apps.yaml`: paste `appdaemon/apps.yaml` from this repo
-   - `secrets.yaml`: add `github_home_data_token: <the token>`
-4. Restart the AppDaemon add-on and check its **Log** for
-   `Exporting N entities every 15 min`.
-
-The first daily file arrives the night after setup; `entities.txt` within a
-minute of starting.
+1. **GitHub token:** a fine-grained token with access to only `home_data`,
+   permission **Contents: Read and write**.
+2. **Add-ons** (Settings → Add-ons/Apps → Store): install **AppDaemon** and
+   **File editor** (turn off **Enforce basepath** in File editor's
+   configuration).
+3. In File editor, in `/app_configs/a0d7b954_appdaemon/`:
+   - `appdaemon.yaml`: set `time_zone: America/Los_Angeles` (and rough
+     latitude/longitude)
+   - `secrets.yaml`: `github_home_data_token: <the token>`
+   - `apps/updater.py`, `apps/home_export.py`, `apps/apps.yaml`: paste from
+     `appdaemon/` in this repo
+4. Restart AppDaemon (with Watchdog on) and check its Log for
+   `Sampling N entities every 5 min; recording every change of M`.
