@@ -19,7 +19,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import appdaemon.plugins.hass.hassapi as hass
 
@@ -40,8 +40,9 @@ class HomeExport(hass.Hass):
         self.data_dir = os.path.join(os.path.dirname(self.app_dir), 'home_export')
         os.makedirs(self.data_dir, exist_ok=True)
 
-        # Sample on clock-aligned intervals (:00, :15, ...).
-        now = datetime.now()
+        # Sample on clock-aligned intervals (:00, :15, ...). AppDaemon's clock
+        # uses the time_zone in appdaemon.yaml, not the container's.
+        now = self.datetime()
         first = now.replace(second=0, microsecond=0) + timedelta(
             minutes=self.interval - now.minute % self.interval)
         self.run_every(self.sample, first, self.interval * 60)
@@ -57,7 +58,7 @@ class HomeExport(hass.Hass):
         return [e for e in keep if not any(fnmatch.fnmatch(e, p) for p in self.exclude)]
 
     def sample(self, kwargs):
-        now = datetime.now()
+        now = self.datetime()
         states = self.get_state()
         rows = []
         for entity_id in self.matching_entities():
@@ -76,7 +77,7 @@ class HomeExport(hass.Hass):
             writer.writerows((ts, e, a, v) for e, a, v in rows)
 
     def upload_finished_days(self, kwargs):
-        today = f"{datetime.now():%Y-%m-%d}.csv"
+        today = f"{self.datetime():%Y-%m-%d}.csv"
         for name in sorted(os.listdir(self.data_dir)):
             if not name.endswith('.csv') or name >= today:
                 continue  # today's file is still being written
