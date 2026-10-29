@@ -1,30 +1,63 @@
-# AppDaemon app configuration for the Home Assistant -> home_data exporter.
-# Copy into the AppDaemon add-on's apps/apps.yaml (see homeassistant/README.md).
+# AppDaemon apps for Home Assistant on the Pi. The updater keeps this file and
+# home_export.py in sync with the home_data_logger repo, so edits deploy by
+# merging on GitHub (see homeassistant/README.md).
+
+updater:
+  module: updater
+  class: Updater
+  repo: KingOfTheNerds32/home_data_logger
+  branch: main
+  interval_minutes: 30
+  files:
+    homeassistant/appdaemon/apps.yaml: apps.yaml
+    homeassistant/appdaemon/home_export.py: home_export.py
+
 home_export:
   module: home_export
   class: HomeExport
   github_token: !secret github_home_data_token
   repo: KingOfTheNerds32/home_data
   folder: ha
-  interval_minutes: 15
-  # Entity id patterns to record (* = wildcard). ha/entities.txt in home_data
-  # lists every entity and marks the exported ones, to help tune these.
-  include:
-    - "sensor.envoy_*"        # gateway totals: production, consumption, grid, battery
-    - "sensor.inverter_*"     # per-panel microinverter output
-    - "sensor.*battery*"      # battery state of charge / power
-    - "sensor.*encharge*"
-    - "climate.*"             # Lennox zones (+ temperature, set point, heating/cooling)
-    - "sensor.*outdoor_temperature*"
-    - "sensor.*flume*"        # water
+  interval_minutes: 5
+  # Snapshot every interval: readings such as power and temperature.
+  sample:
+    - "sensor.gateway_envoy_*_current_*"        # whole-home production / consumption / grid (W)
+    - "sensor.gateway_envoy_*_production_ct_power"
+    - "sensor.gateway_envoy_*_lifetime_*"       # cumulative kWh counters
+    - "sensor.gateway_envoy_*_battery"          # battery state of charge (%)
+    - "sensor.gateway_envoy_*_available_battery_energy"
+    - "sensor.inverter_*"                       # per-panel output
+    - "sensor.battery_encharge_*_power"         # per-battery charge/discharge power
+    - "sensor.battery_encharge_*_battery"       # per-battery state of charge
+    - "sensor.*_indoor_blower_power"            # furnace blower watts
+    - "sensor.*_indoor_blower_rpm"
+    - "sensor.*_blower_cfm_demand"
+    - "sensor.*_discharge_air_temperature"
+    - "sensor.*shared_spaces_outdoor_temperature"
+    - "sensor.*_inverter_energy"                # AC compressor energy (needs diagnostics)
+    - "sensor.flume_sensor_home_current"        # water flow rate
+    - "sensor.flume_sensor_home_current_day"
     - "sensor.pool_temp"
     - "sensor.spa_temp"
     - "sensor.air_temp"
+  # Recorded on every change: on/off and mode-type states.
+  on_change:
+    - "climate.*"                               # HVAC zones + pool/spa set points
+    - "sensor.*_damper_open"                    # zone dampers
+    - "sensor.*_central_mode"
     - "switch.pool_pump"
     - "switch.spa_pump"
     - "switch.pool_heater"
     - "switch.spa_heater"
     - "switch.spillover"
+    - "light.pool_light"
+    - "light.spa_light"
+    - "binary_sensor.*_grid_status"             # grid up/down (outages)
+    - "select.*_storage_mode"                   # battery profile
+    - "switch.*_charge_from_grid"
+    - "number.*_reserve_battery_level"
+    - "binary_sensor.flume_sensor_home_leak_detected"
   exclude:
     - "*_alert*"
     - "*wt_env*"
+    - "*_last_reported"
