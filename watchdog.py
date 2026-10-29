@@ -3,7 +3,8 @@ Watchdog: fails if any data source has gone stale, so GitHub's failure email
 catches problems that produce no failed runs at all (e.g. the external
 cron-job.org trigger stopping, or an expired token). Also fails if fewer
 microinverters reported at midday than normal, which means part of the solar
-array is offline (as happened for two months in spring 2026).
+array is offline (as happened for two months in spring 2026), or if the Home
+Assistant Pi has stopped uploading its nightly ha/ export.
 
 Runs inside the private data repo checkout. Prints only ages and OK/STALE,
 never data values, because run logs on the public repo are visible to anyone.
@@ -40,6 +41,22 @@ def newest_timestamp(path, column):
     index = header.index(column)
     values = [l.split(',')[index] for l in lines if l.count(',') >= index]
     return PACIFIC.localize(datetime.strptime(max(values), "%Y-%m-%d %H:%M:%S"))
+
+
+def check_home_assistant(today):
+    """Newest uploaded Home Assistant day (ha/YYYY-MM/YYYY-MM-DD.csv.gz).
+
+    The Pi uploads each finished day after 00:20, so yesterday is normally the
+    newest; one missed night is allowed. Returns (status line, problem or None).
+    """
+    days = [name[:10] for root, _, files in os.walk('ha') for name in files if name.endswith('.csv.gz')]
+    if not days:
+        return "| Home Assistant `ha/` | no days uploaded yet | | ⏳ |", None
+    newest = datetime.strptime(max(days), "%Y-%m-%d").date()
+    behind = (today - newest).days
+    ok = behind <= 2
+    line = f"| Home Assistant `ha/` | {newest} | {behind} d | {'✅ OK' if ok else '❌ STALE'} |"
+    return line, None if ok else f"Home Assistant export last uploaded {newest}"
 
 
 def check_microinverters():
@@ -92,6 +109,14 @@ def main():
         line, problem = check_microinverters()
     except Exception as e:
         line, problem = f"| Microinverters | unreadable ({type(e).__name__}) | | ❌ |", "microinverter data unreadable"
+    lines.append(line)
+    if problem:
+        stale.append(problem)
+
+    try:
+        line, problem = check_home_assistant(now.date())
+    except Exception as e:
+        line, problem = f"| Home Assistant `ha/` | unreadable ({type(e).__name__}) | | ❌ |", "ha/ unreadable"
     lines.append(line)
     if problem:
         stale.append(problem)
