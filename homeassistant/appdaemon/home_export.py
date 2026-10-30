@@ -27,9 +27,12 @@ from datetime import timedelta
 
 import appdaemon.plugins.hass.hassapi as hass
 
-# Climate attributes recorded alongside each zone's state.
-CLIMATE_ATTRIBUTES = ['current_temperature', 'current_humidity', 'hvac_action',
-                      'temperature', 'target_temp_low', 'target_temp_high']
+# Attributes recorded alongside the state, by entity domain.
+ATTRIBUTES = {
+    'climate.': ['current_temperature', 'current_humidity', 'hvac_action',
+                 'temperature', 'target_temp_low', 'target_temp_high'],
+    'cover.': ['current_position'],   # shade position, 0-100
+}
 
 
 class HomeExport(hass.Hass):
@@ -77,9 +80,10 @@ class HomeExport(hass.Hass):
     def rows_for(entity_id, state):
         state = state or {}
         rows = [(entity_id, '', state.get('state'))]
-        if entity_id.startswith('climate.'):
-            attrs = state.get('attributes', {})
-            rows += [(entity_id, a, attrs.get(a)) for a in CLIMATE_ATTRIBUTES if a in attrs]
+        attrs = state.get('attributes', {})
+        for domain, names in ATTRIBUTES.items():
+            if entity_id.startswith(domain):
+                rows += [(entity_id, a, attrs.get(a)) for a in names if a in attrs]
         return rows
 
     def write(self, when, rows):
