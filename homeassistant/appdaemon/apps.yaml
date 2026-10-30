@@ -19,15 +19,19 @@ home_export:
   repo: KingOfTheNerds32/home_data
   folder: ha
   interval_minutes: 5
-  # Snapshot every interval: readings such as power and temperature.
-  sample:
-    - "sensor.gateway_envoy_*_current_*"        # whole-home production / consumption / grid (W)
+  fast_interval_minutes: 1
+  # Snapshot every minute: whole-home and battery power, which the Envoy
+  # updates about once a minute, to catch short loads (pump, AC cycles).
+  sample_fast:
+    - "sensor.gateway_envoy_*_current_*"        # whole-home production / consumption / grid (kW)
     - "sensor.gateway_envoy_*_production_ct_power"
-    - "sensor.gateway_envoy_*_lifetime_*"       # cumulative kWh counters
+    - "sensor.gateway_envoy_*_lifetime_*"       # cumulative counters: exact energy between readings
+    - "sensor.battery_encharge_*[0-9]_power"    # per-battery charge/discharge power
+  # Snapshot every interval: readings such as temperatures and per-panel output.
+  sample:
     - "sensor.gateway_envoy_*_battery"          # battery state of charge (%)
     - "sensor.gateway_envoy_*_available_battery_energy"
-    - "sensor.inverter_*"                       # per-panel output
-    - "sensor.battery_encharge_*_power"         # per-battery charge/discharge power
+    - "sensor.inverter_*"                       # per-panel output (microinverters report ~5 min)
     - "sensor.battery_encharge_*_battery"       # per-battery state of charge
     - "sensor.*_indoor_blower_power"            # furnace blower watts
     - "sensor.*_indoor_blower_rpm"

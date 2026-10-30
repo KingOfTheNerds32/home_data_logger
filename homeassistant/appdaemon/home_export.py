@@ -5,12 +5,13 @@ Records two kinds of data to a local daily CSV:
 - `on_change` entities (zone heating/cooling, switches, battery mode, ...):
   a row every time they change, with the exact time, so run times are exact.
 - `sample` entities (power, temperature, ...): a snapshot every
-  `interval_minutes` minutes, aligned to the clock.
+  `interval_minutes` minutes, aligned to the clock; `sample_fast` entities
+  (whole-home and battery power) every `fast_interval_minutes`.
 
 Once a day it uploads finished days, gzip-compressed, to the private
 home_data repo via the GitHub API; uploads that fail are retried on the next run, so no day is lost.
 On startup it also uploads ha/entities.txt: every entity id (no values),
-marked `s` (sampled) or `c` (on change), to help tune the patterns.
+marked `f` (fast), `s` (sampled) or `c` (on change), to help tune the patterns.
 
 Standard library only. Configured in apps.yaml; see homeassistant/README.md.
 """
@@ -36,23 +37,27 @@ class HomeExport(hass.Hass):
     def initialize(self):
         self.exclude = self.args.get('exclude', [])
         self.interval = int(self.args.get('interval_minutes', 5))
+        self.fast_interval = int(self.args.get('fast_interval_minutes', 1))
         self.repo = self.args.get('repo', 'KingOfTheNerds32/home_data')
         self.folder = self.args.get('folder', 'ha')
         self.token = self.args['github_token']
         self.data_dir = os.path.join(os.path.dirname(self.app_dir), 'home_export')
         os.makedirs(self.data_dir, exist_ok=True)
 
-        self.sampled = self.matching(self.args.get('sample', []))
-        self.watched = [e for e in self.matching(self.args.get('on_change', [])) if e not in self.sampled]
+        self.fast = self.matching(self.args.get('sample_fast', []))
+        self.sampled = [e for e in self.matching(self.args.get('sample', [])) if e not in self.fast]
+        self.watched = [e for e in self.matching(self.args.get('on_change', []))
+                        if e not in self.sampled and e not in self.fast]
         for entity_id in self.watched:
             self.listen_state(self.changed, entity_id, attribute='all')
 
         # Snapshots on clock-aligned intervals (:00, :05, ...). AppDaemon's
         # clock uses the time_zone in appdaemon.yaml, not the container's.
-        now = self.datetime()
-        first = now.replace(second=0, microsecond=0) + timedelta(
-            minutes=self.interval - now.minute % self.interval)
-        self.run_every(self.sample, first, self.interval * 60)
+        for entities, minutes in ((self.sampled, self.interval), (self.fast, self.fast_interval)):
+            if entities:
+                now = self.datetime()
+                first = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes - now.minute % minutes)
+                self.run_every(self.sample, first, minutes * 60, entities=entities)
         self.run_daily(self.upload_finished_days, '00:20:00')
 
         # Record where every watched entity starts, so on/off spans are known
@@ -60,8 +65,8 @@ class HomeExport(hass.Hass):
         self.run_in(self.record_watched, 5)
         self.run_in(self.upload_entity_list, 30)
         self.run_in(self.upload_finished_days, 60)
-        self.log(f"Sampling {len(self.sampled)} entities every {self.interval} min; "
-                 f"recording every change of {len(self.watched)}")
+        self.log(f"Sampling {len(self.fast)} entities every {self.fast_interval} min and "
+                 f"{len(self.sampled)} every {self.interval} min; recording every change of {len(self.watched)}")
 
     def matching(self, patterns):
         ids = sorted(self.get_state().keys())
@@ -91,7 +96,7 @@ class HomeExport(hass.Hass):
         now = self.datetime().replace(microsecond=0)
         states = self.get_state()
         rows = []
-        for entity_id in self.sampled:
+        for entity_id in kwargs['entities']:
             rows += self.rows_for(entity_id, states.get(entity_id))
         self.write(now, rows)
 
@@ -123,9 +128,9 @@ class HomeExport(hass.Hass):
 
     def upload_entity_list(self, kwargs):
         ids = sorted(self.get_state().keys())
-        mark = lambda e: 's' if e in self.sampled else 'c' if e in self.watched else ' '
+        mark = lambda e: 'f' if e in self.fast else 's' if e in self.sampled else 'c' if e in self.watched else ' '
         lines = [f"{mark(e)} {e}" for e in ids]
-        header = "# All Home Assistant entities; s = sampled, c = recorded on change\n"
+        header = "# All Home Assistant entities; f = sampled fast, s = sampled, c = recorded on change\n"
         self.put_file(f"{self.folder}/entities.txt", (header + "\n".join(lines) + "\n").encode(),
                       "HA entity list")
 
