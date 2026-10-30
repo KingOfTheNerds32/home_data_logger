@@ -44,6 +44,8 @@ home_export:
     - "sensor.pool_temp"
     - "sensor.spa_temp"
     - "sensor.air_temp"
+    - "sensor.ph"                               # pool chemistry
+    - "sensor.orp"
   # Recorded on every change: on/off and mode-type states.
   on_change:
     - "climate.*"                               # HVAC zones + pool/spa set points
@@ -61,6 +63,11 @@ home_export:
     - "switch.*_charge_from_grid"
     - "number.*_reserve_battery_level"
     - "binary_sensor.flume_sensor_home_leak_detected"
+    - "sensor.cover_pool"                       # pool cover open/closed
+    - "binary_sensor.*_watering"                # Hydrawise zone running
+    - "binary_sensor.*_rain_sensor"
+    - "sensor.*_daily_active_watering_time"     # Hydrawise minutes watered today
+    - "cover.*"                                 # PowerView shades (with position)
   exclude:
     - "*_alert*"
     - "*wt_env*"
