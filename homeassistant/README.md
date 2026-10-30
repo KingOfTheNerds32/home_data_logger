@@ -8,13 +8,14 @@ the cloud loggers can't get: per-panel solar, Lennox HVAC zones, Flume water.
 Two AppDaemon apps run in the AppDaemon add-on:
 
 - **`home_export`** records selected entities to a local daily CSV:
-  readings in `sample` every 5 minutes, and states in `on_change` every time
+  whole-home and battery power in `sample_fast` every minute, other readings
+  in `sample` every 5 minutes, and states in `on_change` every time
   they change (exact run times for HVAC zones, pool equipment, battery mode,
   grid status). Each night it uploads finished days, gzip-compressed, to the
   private `home_data` repo at `ha/YYYY-MM/YYYY-MM-DD.csv.gz` (long format:
   `timestamp, entity_id, attribute, value`), retrying failed days. It also
-  uploads `ha/entities.txt` listing all entity ids, marked `s` (sampled) or
-  `c` (on change).
+  uploads `ha/entities.txt` listing all entity ids, marked `f` (fast),
+  `s` (sampled) or `c` (on change).
 - **`updater`** checks this repo every 30 minutes and pulls new versions of
   `apps.yaml` and `home_export.py` from `main`, which AppDaemon then reloads.
   **Changes deploy by merging to `main`.** The updater never updates itself or
@@ -34,4 +35,4 @@ Two AppDaemon apps run in the AppDaemon add-on:
    - `apps/updater.py`, `apps/home_export.py`, `apps/apps.yaml`: paste from
      `appdaemon/` in this repo
 4. Restart AppDaemon (with Watchdog on) and check its Log for
-   `Sampling N entities every 5 min; recording every change of M`.
+   `Sampling N entities every 1 min and M every 5 min; recording every change of K`.
