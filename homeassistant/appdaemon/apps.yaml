@@ -63,7 +63,6 @@ home_export:
     - "switch.*_charge_from_grid"
     - "number.*_reserve_battery_level"
     - "binary_sensor.flume_sensor_home_leak_detected"
-    - "sensor.cover_pool"                       # pool cover open/closed
     - "binary_sensor.*_watering"                # Hydrawise zone running
     - "binary_sensor.*_rain_sensor"
     - "sensor.*_daily_active_watering_time"     # Hydrawise minutes watered today
