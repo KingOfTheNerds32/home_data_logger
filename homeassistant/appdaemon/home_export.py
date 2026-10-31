@@ -32,6 +32,7 @@ ATTRIBUTES = {
     'climate.': ['current_temperature', 'current_humidity', 'hvac_action',
                  'temperature', 'target_temp_low', 'target_temp_high'],
     'cover.': ['current_position'],   # shade position, 0-100
+    'water_heater.': ['current_temperature', 'temperature', 'operation_mode'],
 }
 
 
