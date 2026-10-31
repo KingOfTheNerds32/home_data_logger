@@ -32,14 +32,10 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Checkout Private Data Repo
-        env:
-          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
-        run: |
-          if [ -z "$DATA_REPO_TOKEN" ]; then
-            echo "::error::DATA_REPO_TOKEN secret is missing - add it under Settings > Secrets and variables > Actions"
-            exit 1
-          fi
-          git clone --depth 1 "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
+        uses: ./.github/actions/checkout-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v6
