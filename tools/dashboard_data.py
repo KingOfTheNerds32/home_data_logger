@@ -184,18 +184,21 @@ def solar_year_change():
     return pd.DataFrame(rows)
 
 
+# Periods with distinct overnight battery behaviour (see analyses.md, Battery).
+BATTERY_PERIODS = [('2023-04-01', 'Apr 2023-Dec 2024'), ('2025-01-01', '2025-Jun 2026'), ('2026-07-01', 'Jul 2026 on')]
+
+
 def battery_profile():
-    """Average state of charge of the six batteries by time of day, per season,
-    over all years (Apr 2023 on)."""
+    """Average state of charge of the six batteries by time of day, per period
+    of distinct overnight behaviour, and the 10th-90th percentile range."""
     b = pd.read_csv('battery_5min.csv.gz')
     s = b.groupby(['interval_end', 'tz']).soc_pct.mean().reset_index()
     t = pd.to_datetime(s.interval_end)
-    seasons = {12: 'Winter', 1: 'Winter', 2: 'Winter', 3: 'Spring', 4: 'Spring', 5: 'Spring',
-               6: 'Summer', 7: 'Summer', 8: 'Summer', 9: 'Fall', 10: 'Fall', 11: 'Fall'}
-    s['season'] = t.dt.month.map(seasons)
+    starts = pd.to_datetime([p[0] for p in BATTERY_PERIODS])
+    s['period'] = [BATTERY_PERIODS[i][1] for i in starts.searchsorted(t, side='right') - 1]
     s['time'] = t.dt.strftime('%H:%M')
-    out = s.groupby(['season', 'time']).soc_pct.agg(['mean', lambda x: x.quantile(0.1), lambda x: x.quantile(0.9)]).reset_index()
-    out.columns = ['season', 'time', 'soc_pct', 'soc_p10', 'soc_p90']
+    out = s.groupby(['period', 'time']).soc_pct.agg(['mean', lambda x: x.quantile(0.1), lambda x: x.quantile(0.9)]).reset_index()
+    out.columns = ['period', 'time', 'soc_pct', 'soc_p10', 'soc_p90']
     out[['soc_pct', 'soc_p10', 'soc_p90']] = out[['soc_pct', 'soc_p10', 'soc_p90']].round(1)
     return out
 
