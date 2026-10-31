@@ -68,6 +68,8 @@ home_export:
     - "binary_sensor.*_rain_sensor"
     - "sensor.*_daily_active_watering_time"     # Hydrawise minutes watered today
     - "cover.*"                                 # PowerView shades (with position)
+    - "water_heater.*"                          # Rinnai: temperature and setpoint
+    - "*_recirculation"                         # Rinnai recirculation pump running / enabled
   exclude:
     - "*_alert*"
     - "*wt_env*"
