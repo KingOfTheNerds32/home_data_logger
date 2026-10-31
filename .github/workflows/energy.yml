@@ -48,11 +48,21 @@ jobs:
           GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
         run: python ../energy_logger.py
 
+      # Daily sunlight and weather from Open-Meteo's archive, to compare solar
+      # output between years on equal sun. Independent of Enphase.
+      - name: Pull Sunlight History
+        if: always()
+        working-directory: data
+        env:
+          LAT: ${{ secrets.LAT }}
+          LONG: ${{ secrets.LONG }}
+        run: python ../sunlight_logger.py
+
       # Always push, so the request count in enphase_state.json is kept even
       # if the pull failed partway.
       - name: Commit and Push Data
         if: always()
         uses: ./.github/actions/push-data
         with:
-          paths: energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json
+          paths: energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json sunlight_daily.csv
           message: Energy Update
