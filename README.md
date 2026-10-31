@@ -8,6 +8,7 @@ data goes to the private `home_data` repo, whose README describes every file.
 |---|---|---|
 | `main.py`, `pool_logger.py`, `weather_logger.py` | Pool equipment (iAquaLink) and weather (OpenWeather), every 5 min | GitHub Actions |
 | `energy_logger.py` | Enphase cloud: daily 15-min and 5-min data, EV sessions, daily totals, history backfill | GitHub Actions |
+| `sunlight_logger.py` | Daily sunlight, cloud, temperature and rain since install (Open-Meteo archive), to compare solar output on equal sun | GitHub Actions (with the energy logger) |
 | `watchdog.py` | Alerts when any source goes stale or part of the solar array stops reporting | GitHub Actions |
 | `homeassistant/` | AppDaemon apps on the Home Assistant Pi: 1- and 5-min snapshots and every state change, uploaded nightly (see its README) | Raspberry Pi |
 | `tools/` | Scripts run by hand: importing Enlighten report exports, building the dashboard's summary tables | Locally |
