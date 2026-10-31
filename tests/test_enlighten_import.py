@@ -60,3 +60,14 @@ def test_ev_merge_keeps_api_sessions_and_flags_the_phantom_year(tmp_path, monkey
     d = pd.read_csv('ev_daily.csv').set_index('date')
     assert d.loc['2025-09-01', 'phantom'] == 1 and d.loc['2024-07-01', 'phantom'] == 0
     assert d.loc['2025-09-01', 'session_wh'] == 10000
+
+
+def test_audi_trips_accept_the_older_average_symbol():
+    import audi_import
+    text = ('VIN;;;Route:;"1 mi";Exported on:;"09/02/2026, 07:23"\n;;;;;;;Electric motor\n'
+            'End of journey;Distance traveled in mi;Time driven in hours;Average speed in mph;'
+            'Average energy consumption in kWh/100mi;Total consumption in kWh\n'
+            '"07/02/2026, 16:26";"1,000.5";01:20;1.86;⌀ 94.63;0.59\n')
+    t = audi_import.read_trips(text)
+    assert t.iloc[0].to_dict() == {'end_time': '2026-02-07 16:26', 'miles': 1000.5, 'minutes_driven': 80,
+                                   'avg_mph': 1.86, 'kwh_per_100mi': 94.63, 'kwh': 0.59}

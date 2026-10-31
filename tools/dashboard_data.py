@@ -73,7 +73,7 @@ def string_outage():
     return m
 
 
-def car_monthly(since='2025-06'):
+def car_monthly(since='2025-04'):
     """Miles and the car's own energy count (Audi trip log) against energy the
     home charger delivered (sessions). Charging away from home lowers the
     ratio; charging losses and energy used while parked raise it."""
@@ -84,7 +84,7 @@ def car_monthly(since='2025-06'):
                       'car_kwh': t.groupby('month').kwh.sum().round(0),
                       'home_charging_kwh': s.groupby(s.start_time.str[:7]).energy_kwh.sum().round(0)})
     m = m.reset_index().rename(columns={'index': 'month'}).dropna(subset=['trips'])
-    return m[m.month >= since]   # the trip log starts May 21, 2025
+    return m[m.month >= since]   # the trip log starts Mar 29, 2025
 
 
 def car_buckets():
