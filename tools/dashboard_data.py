@@ -16,6 +16,7 @@ The dashboard reads small CSVs, not the raw history, so this script writes:
     solar_year_change.csv    year-to-year change in output on days with matching sunlight
     battery_profile.csv      average battery charge by time of day, per season
     pool_daily.csv           pool and air temperatures, pump and heater hours, weather, per day
+    hourly_flows.csv         average kWh per hour of day: car charging, battery, grid, solar, home
 
 Usage (from the home_data checkout):
     python ../tools/dashboard_data.py OUT_DIR
@@ -138,18 +139,37 @@ def _sun_matched():
     d = pd.DataFrame({'kwh': prod}).join(sun, how='inner')
     d['year'], d['month'] = d.index.str[:4], d.index.str[5:7].astype(int)
     d['sun_bin'] = (d.sun_kwh_m2 * 2).round() / 2
-    cells = d.groupby(['month', 'sun_bin', 'year']).kwh.median().unstack()
-    days = d.groupby(['month', 'sun_bin']).size()
+    g = d.groupby(['month', 'sun_bin', 'year']).kwh
+    # A cell needs at least MIN_DAYS days in a year to count for that year: single
+    # cloudy days are where the modelled sunlight is least reliable.
+    cells = g.median().where(g.size() >= MIN_DAYS).unstack()
+    days = g.size().unstack().fillna(0)
     return cells, days
 
 
+MIN_DAYS = 3
+
+
+def _ratio(cells, days, a, b):
+    """Change from year a to year b: the median ratio over cells both years
+    have, each cell weighted by its days in the two years."""
+    r = (cells[b] / cells[a]).dropna()
+    w = (days[a] + days[b]).reindex(r.index)
+    order = r.sort_values().index
+    cum = w[order].cumsum() / w.sum()
+    return r[order][cum >= 0.5].iloc[0], r.index, w
+
+
 def solar_vs_2023():
-    cells, _ = _sun_matched()
+    cells, days = _sun_matched()
     rows = []
     for year in [y for y in cells.columns if y != '2023']:
-        r = (cells[year] / cells['2023']).dropna()
-        for month, v in r.groupby(level=0).median().items():
-            rows.append({'year': year, 'month': month, 'vs_2023': round(v, 4), 'cells': int(r.loc[month].size)})
+        for month in sorted(set(cells.index.get_level_values(0))):
+            c, n = cells.loc[month], days.loc[month]
+            if (c[year] / c['2023']).dropna().empty:
+                continue
+            v, idx, w = _ratio(c, n, '2023', year)
+            rows.append({'year': year, 'month': month, 'vs_2023': round(v, 4), 'cells': len(idx), 'days': int(w.sum())})
     return pd.DataFrame(rows)
 
 
@@ -158,9 +178,8 @@ def solar_year_change():
     rows = []
     for a, b in [('2023', '2024'), ('2024', '2025'), ('2025', '2026'), ('2023', '2025'), ('2023', '2026')]:
         if a in cells and b in cells:
-            r = (cells[b] / cells[a]).dropna()
-            rows.append({'span': f'{a}-{b}', 'change': round(r.median() - 1, 4), 'cells': len(r),
-                         'days': int(days.reindex(r.index).sum())})
+            v, idx, w = _ratio(cells, days, a, b)
+            rows.append({'span': f'{a}-{b}', 'change': round(v - 1, 4), 'cells': len(idx), 'days': int(w.sum())})
     return pd.DataFrame(rows)
 
 
@@ -193,9 +212,13 @@ def pool_daily():
     p['pump_h'], p['gas_h'], p['spill_h'] = on('pool_pump'), on('pool_heater'), on('spillover')
     p['hp_h'] = on('heat_pump')
     p['pool_temp_running'] = p.pool_temp.where(p.pool_pump == 'ON')
+    # Water sitting in the pipe reads ~7 F cold when the pump starts; the day's low
+    # counts only readings after the pump has run 30 minutes (6 readings).
+    run = (p.pool_pump != p.pool_pump.shift()).cumsum()
+    settled = p.groupby(run).cumcount() >= 6
+    p['pool_temp_settled'] = p.pool_temp_running.where(settled)
     # The pool's own air sensor reads high in sun, so outdoor temperature comes from the weather log;
-    # the lowest pool reading is skipped because water sitting in the pipe reads cold at pump start.
-    d = p.groupby('date').agg(pool_temp_max=('pool_temp_running', 'max'),
+    d = p.groupby('date').agg(pool_temp_max=('pool_temp_running', 'max'), pool_temp_min=('pool_temp_settled', 'min'),
                               pump_hours=('pump_h', 'sum'), gas_heater_hours=('gas_h', 'sum'),
                               heat_pump_hours=('hp_h', 'sum'), spillover_hours=('spill_h', 'sum'))
     w = pd.read_csv('weather_history.csv')
@@ -204,6 +227,22 @@ def pool_daily():
                                clouds_pct=('clouds_percent', 'mean'), rain_mm=('rain_1h_mm', lambda x: x.sum() / 12))
     d = d.join(wd, how='left').reset_index().round(1)
     return d.iloc[1:-1]   # first and last days are partial
+
+
+def hourly_flows(since='2026-08-08'):
+    """Average kWh in each hour of the day for car charging, battery charge and
+    discharge, grid import and export, solar and household use, from the
+    15-minute data. Starts after the phantom EV reading ended (Aug 8, 2026)."""
+    e = pd.read_csv('energy_history.csv')
+    t = pd.to_datetime(e.interval_end) - pd.Timedelta(minutes=15)   # interval start
+    e = e[t >= since].assign(hour=t[t >= since].dt.hour)
+    days = t[t >= since].dt.date.nunique()
+    cols = ['ev_charging_wh', 'battery_charge_wh', 'battery_discharge_wh', 'grid_import_wh',
+            'grid_export_wh', 'production_wh', 'consumption_wh']
+    h = (e.groupby('hour')[cols].sum() / days / 1000).round(3)
+    h.columns = [c.replace('_wh', '_kwh') for c in cols]
+    h['days'] = days
+    return h.reset_index()
 
 
 def washed_panel_ratio():
@@ -248,7 +287,7 @@ def main():
                         ('car_monthly', car_monthly), ('car_buckets', car_buckets),
                         ('solar_clear_days', solar_clear_days), ('solar_vs_2023', solar_vs_2023),
                         ('solar_year_change', solar_year_change), ('battery_profile', battery_profile),
-                        ('pool_daily', pool_daily)]:
+                        ('pool_daily', pool_daily), ('hourly_flows', hourly_flows)]:
         build().to_csv(os.path.join(out, f'{name}.csv'), index=False)
         print(f"wrote {out}/{name}.csv")
 
