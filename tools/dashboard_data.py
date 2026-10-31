@@ -17,6 +17,7 @@ The dashboard reads small CSVs, not the raw history, so this script writes:
     battery_profile.csv      average battery charge by time of day, per season
     pool_daily.csv           pool and air temperatures, pump and heater hours, weather, per day
     hourly_flows.csv         average kWh per hour of day: car charging, battery, grid, solar, home
+    charging_by_hour.csv     while the car is charging: how often, how fast, and what supplies it
 
 Usage (from the home_data checkout):
     python ../tools/dashboard_data.py OUT_DIR
@@ -245,6 +246,30 @@ def hourly_flows(since='2026-08-08'):
     return h.reset_index()
 
 
+def charging_by_hour(since='2026-08-08', min_kw=1.0):
+    """For each hour of the day, the 15-minute intervals in which the car was
+    charging (over min_kw): on what share of days, at what average power, and
+    the average power from the battery, the grid and solar in those intervals
+    (they also cover the rest of the house). 15-minute averages read below the
+    charger's set rate when charging starts or stops inside an interval."""
+    e = pd.read_csv('energy_history.csv')
+    t = pd.to_datetime(e.interval_end) - pd.Timedelta(minutes=15)
+    keep = t >= since
+    e, t = e[keep], t[keep]
+    days = t.dt.date.nunique()
+    kw = lambda col: e[col] * 4 / 1000
+    d = pd.DataFrame({'hour': t.dt.hour, 'car_kw': kw('ev_charging_wh'), 'battery_kw': kw('battery_discharge_wh'),
+                      'grid_kw': kw('grid_import_wh'), 'solar_kw': kw('production_wh'), 'home_kw': kw('consumption_wh')})
+    c = d[d.car_kw > min_kw]
+    out = c.groupby('hour').agg(intervals=('car_kw', 'size'), car_kw=('car_kw', 'mean'), battery_kw=('battery_kw', 'mean'),
+                                grid_kw=('grid_kw', 'mean'), solar_kw=('solar_kw', 'mean'), home_kw=('home_kw', 'mean'))
+    out = out.reindex(range(24)).fillna(0)
+    out['share_of_days'] = (out.intervals / 4 / days).round(3)   # four 15-min intervals per hour
+    out = out.round(2).reset_index()
+    out['days'] = days
+    return out
+
+
 def washed_panel_ratio():
     """Daily output of the washed panels divided by the unwashed panels on the
     same string, averaged per month. Only clear days with the whole string
@@ -287,7 +312,8 @@ def main():
                         ('car_monthly', car_monthly), ('car_buckets', car_buckets),
                         ('solar_clear_days', solar_clear_days), ('solar_vs_2023', solar_vs_2023),
                         ('solar_year_change', solar_year_change), ('battery_profile', battery_profile),
-                        ('pool_daily', pool_daily), ('hourly_flows', hourly_flows)]:
+                        ('pool_daily', pool_daily), ('hourly_flows', hourly_flows),
+                        ('charging_by_hour', charging_by_hour)]:
         build().to_csv(os.path.join(out, f'{name}.csv'), index=False)
         print(f"wrote {out}/{name}.csv")
 
