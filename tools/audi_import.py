@@ -29,7 +29,8 @@ def read_trips(text):
     t.columns = ['end_time', 'miles', 'time_driven', 'avg_mph', 'kwh_per_100mi', 'kwh']
     t['end_time'] = pd.to_datetime(t.end_time, format='%d/%m/%Y, %H:%M').dt.strftime('%Y-%m-%d %H:%M')
     for col in ('miles', 'avg_mph', 'kwh_per_100mi', 'kwh'):
-        t[col] = pd.to_numeric(t[col].str.replace(',', '', regex=False))
+        # Older exports prefix averages with '⌀' and write thousands as '1,234'.
+        t[col] = pd.to_numeric(t[col].str.replace(',', '', regex=False).str.replace('⌀', '', regex=False).str.strip())
     hours, minutes = t.time_driven.str.split(':', expand=True).astype(int).T.values
     t['minutes_driven'] = hours * 60 + minutes
     return t[['end_time', 'miles', 'minutes_driven', 'avg_mph', 'kwh_per_100mi', 'kwh']]
