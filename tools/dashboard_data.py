@@ -12,6 +12,8 @@ The dashboard reads small CSVs, not the raw history, so this script writes:
     car_monthly.csv          miles and the car's own kWh (Audi trips) vs home charging, per month
     car_buckets.csv          the car's efficiency by trip speed and by trip length
     solar_clear_days.csv     clear-day production per month and year (for degradation)
+    solar_vs_2023.csv        output against 2023 on days with the same month and sunlight
+    solar_year_change.csv    year-to-year change in output on days with matching sunlight
     battery_profile.csv      average battery charge by time of day, per season
     pool_daily.csv           pool and air temperatures, pump and heater hours, weather, per day
 
@@ -122,6 +124,46 @@ def solar_clear_days():
     return out[out.days >= 20]   # skip partial months (install, the current month)
 
 
+def _sun_matched():
+    """Daily output of the 39 panels that never went offline, with that day's
+    sunlight (sunlight_daily.csv), grouped into cells of the same calendar
+    month and the same sunlight (0.5 kWh/m2 bins). Comparing years within a
+    cell removes weather, including the 15 kW clipping on very sunny days."""
+    lay = pd.read_csv('panel_layout.csv', dtype={'serial': str})
+    keep = sorted(lay[lay.on_failed_string == 0].serial)
+    p = pd.read_csv('panels_daily.csv.gz', dtype={'serial': str}).dropna()
+    day = p.pivot(index='date', columns='serial', values='wh')[keep]
+    prod = day[(day > 0).all(axis=1)].sum(axis=1) / 1000
+    sun = pd.read_csv('sunlight_daily.csv').set_index('date')
+    d = pd.DataFrame({'kwh': prod}).join(sun, how='inner')
+    d['year'], d['month'] = d.index.str[:4], d.index.str[5:7].astype(int)
+    d['sun_bin'] = (d.sun_kwh_m2 * 2).round() / 2
+    cells = d.groupby(['month', 'sun_bin', 'year']).kwh.median().unstack()
+    days = d.groupby(['month', 'sun_bin']).size()
+    return cells, days
+
+
+def solar_vs_2023():
+    cells, _ = _sun_matched()
+    rows = []
+    for year in [y for y in cells.columns if y != '2023']:
+        r = (cells[year] / cells['2023']).dropna()
+        for month, v in r.groupby(level=0).median().items():
+            rows.append({'year': year, 'month': month, 'vs_2023': round(v, 4), 'cells': int(r.loc[month].size)})
+    return pd.DataFrame(rows)
+
+
+def solar_year_change():
+    cells, days = _sun_matched()
+    rows = []
+    for a, b in [('2023', '2024'), ('2024', '2025'), ('2025', '2026'), ('2023', '2025'), ('2023', '2026')]:
+        if a in cells and b in cells:
+            r = (cells[b] / cells[a]).dropna()
+            rows.append({'span': f'{a}-{b}', 'change': round(r.median() - 1, 4), 'cells': len(r),
+                         'days': int(days.reindex(r.index).sum())})
+    return pd.DataFrame(rows)
+
+
 def battery_profile():
     """Average state of charge of the six batteries by time of day, per season,
     over all years (Apr 2023 on)."""
@@ -204,7 +246,8 @@ def main():
                         ('panels_2025', panels_2025), ('washed_panel_ratio', washed_panel_ratio),
                         ('string_outage', string_outage), ('ev_monthly', ev_monthly),
                         ('car_monthly', car_monthly), ('car_buckets', car_buckets),
-                        ('solar_clear_days', solar_clear_days), ('battery_profile', battery_profile),
+                        ('solar_clear_days', solar_clear_days), ('solar_vs_2023', solar_vs_2023),
+                        ('solar_year_change', solar_year_change), ('battery_profile', battery_profile),
                         ('pool_daily', pool_daily)]:
         build().to_csv(os.path.join(out, f'{name}.csv'), index=False)
         print(f"wrote {out}/{name}.csv")
