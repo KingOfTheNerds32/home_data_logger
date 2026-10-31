@@ -23,15 +23,9 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Checkout Private Data Repo
-        env:
-          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
-        run: |
-          if [ -z "$DATA_REPO_TOKEN" ]; then
-            echo "::error::DATA_REPO_TOKEN secret is missing - add it under Settings > Secrets and variables > Actions"
-            exit 1
-          fi
-          git clone "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
-          git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main
+        uses: ./.github/actions/checkout-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -39,7 +33,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: pip install pandas pytz requests pynacl
+        run: pip install -r requirements.txt
 
       # A failure here turns the run red, which triggers GitHub's failure email.
       - name: Pull Enphase Data
@@ -58,20 +52,7 @@ jobs:
       # if the pull failed partway.
       - name: Commit and Push Data
         if: always()
-        working-directory: data
-        run: |
-          [ -d .git ] || exit 0
-          git config --global user.name "PoolBot"
-          git config --global user.email "poolbot@github.com"
-          for f in energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json; do
-            if [ -f "$f" ]; then git add "$f"; fi
-          done
-          git commit -m "Energy Update: $(date)" || exit 0
-          for attempt in 1 2 3 4; do
-            git pull --rebase origin main 2>/dev/null || true
-            git push origin HEAD:main && exit 0
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 5))
-          done
-          echo "Failed to push energy data after 4 attempts"
-          exit 1
+        uses: ./.github/actions/push-data
+        with:
+          paths: energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json
+          message: Energy Update

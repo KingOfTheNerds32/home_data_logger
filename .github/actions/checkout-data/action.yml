@@ -1,0 +1,24 @@
+name: Checkout home_data
+description: Clone the private home_data repo into ./data (data lives there so this public repo holds only code).
+inputs:
+  token:
+    description: DATA_REPO_TOKEN (Contents read/write on home_data)
+    required: true
+  depth:
+    description: Clone depth; empty for full history
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DATA_REPO_TOKEN: ${{ inputs.token }}
+        DEPTH: ${{ inputs.depth }}
+      run: |
+        if [ -z "$DATA_REPO_TOKEN" ]; then
+          echo "::error::DATA_REPO_TOKEN secret is missing - add it under Settings > Secrets and variables > Actions"
+          exit 1
+        fi
+        git clone ${DEPTH:+--depth "$DEPTH"} "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${{ github.repository_owner }}/home_data.git" data
+        git -C data checkout -B main origin/main 2>/dev/null || git -C data checkout -B main

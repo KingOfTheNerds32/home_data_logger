@@ -1,0 +1,30 @@
+name: Tests
+
+# Runs the unit tests on every pull request and push to main. No secrets or
+# network: the tests use small sample files only.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Tests
+        run: python -m pytest -q

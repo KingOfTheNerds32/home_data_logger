@@ -1,0 +1,34 @@
+name: Push to home_data
+description: Commit the given paths in ./data and push, rebasing onto anything pushed meanwhile.
+inputs:
+  paths:
+    description: Space-separated files, folders or globs (relative to data/); missing ones are skipped
+    required: true
+  message:
+    description: Commit message prefix; the date is appended
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        MESSAGE: ${{ inputs.message }}
+      run: |
+        # Nothing to push if the data checkout itself failed.
+        cd data 2>/dev/null && [ -d .git ] || exit 0
+        git config user.name "PoolBot"
+        git config user.email "poolbot@github.com"
+        for p in $PATHS; do
+          [ -e "$p" ] && git add "$p"
+        done
+        git commit -m "$MESSAGE: $(date)" || exit 0
+        # The pull fails harmlessly on the very first push, before main exists.
+        for attempt in 1 2 3 4; do
+          git pull --rebase origin main 2>/dev/null || true
+          git push origin HEAD:main && exit 0
+          git rebase --abort 2>/dev/null || true
+          sleep $((attempt * 5))
+        done
+        echo "Failed to push to home_data after 4 attempts"
+        exit 1

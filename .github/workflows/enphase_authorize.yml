@@ -27,7 +27,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: pip install pandas pytz requests pynacl
+        run: pip install -r requirements.txt
 
       - name: Exchange Code for Tokens
         env:
