@@ -60,3 +60,22 @@ def test_backfill_does_nothing_once_history_reaches_the_install_date(tmp_path, m
     api = FakeApi('2023-04-05')
     el.backfill(api)
     assert api.used_this_run == 0
+
+
+def test_merge_csv_keeps_stored_values_a_refetch_lacks(tmp_path):
+    path = tmp_path / 'x.csv'
+    el.merge_csv(str(path), [{'k': 1, 'a': 5.0, 'b': 6.0}], 'k')
+    el.merge_csv(str(path), [{'k': 1, 'a': 7.0, 'b': None}], 'k')
+    assert pd.read_csv(path).to_dict('records') == [{'k': 1, 'a': 7.0, 'b': 6.0}]
+
+
+def test_days_to_pull_refetches_incomplete_days_and_new_ones():
+    today = el.local_midnight(datetime(2026, 10, 31))
+    times = pd.date_range('2026-10-28 00:15', '2026-10-30 00:00', freq='15min')
+    existing = pd.DataFrame({'interval_end': times.strftime(el.TIME_FORMAT)})
+    for c in el.CORE_COLUMNS:
+        existing[c] = 1.0
+    existing.loc[existing.interval_end.str.startswith('2026-10-29 1'), 'grid_import_wh'] = None
+    days = [d.strftime('%Y-%m-%d') for d in el.days_to_pull(existing, today)]
+    # Oct 28 is complete; Oct 29 lacks imports; Oct 30 was never pulled; older days in the window were never stored.
+    assert '2026-10-28' not in days and '2026-10-29' in days and '2026-10-30' in days

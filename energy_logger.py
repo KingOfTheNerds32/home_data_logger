@@ -195,14 +195,17 @@ def to_local(epoch):
 
 
 def merge_csv(path, new_rows, key):
-    """Add rows to a CSV, replacing any with the same key, sorted by key."""
+    """Add rows to a CSV, sorted by key. A new row replaces the stored one with
+    the same key, except that a value the new row lacks keeps the stored value,
+    so an endpoint that fails on a refetch never blanks good data."""
     if not new_rows:
         return 0
-    new = pd.DataFrame(new_rows)
+    new = pd.DataFrame(new_rows).drop_duplicates(key, keep='last').set_index(key)
     existing = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
-    combined = pd.concat([existing, new]).drop_duplicates(key, keep='last').sort_values(key)
-    combined.to_csv(path, index=False)
-    return len(new)
+    if not existing.empty:
+        new = new.combine_first(existing.drop_duplicates(key, keep='last').set_index(key))
+    new.reset_index().sort_values(key).to_csv(path, index=False)
+    return len(new_rows)
 
 
 def intervals(payload):
@@ -259,16 +262,29 @@ def find_ev_charger(api):
     api.ev_serial = None if serial == 'none' else serial
 
 
-def catch_up(api, today):
-    """Pull every complete day since the last stored one (up to a week)."""
-    existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame()
+# A stored day is complete when every interval has these values.
+CORE_COLUMNS = ['production_wh', 'consumption_wh', 'grid_import_wh', 'grid_export_wh']
+
+
+def days_to_pull(existing, today):
+    """Complete days to (re)fetch, within the last MAX_CATCHUP_DAYS: every day
+    after the last stored one, plus any stored day with missing values (an
+    endpoint that failed on an earlier run)."""
+    window = [local_midnight(today - timedelta(days=n)) for n in range(MAX_CATCHUP_DAYS, 0, -1)]
     if existing.empty:
-        day = today - timedelta(days=1)
-    else:
-        last = PACIFIC.localize(datetime.strptime(existing['interval_end'].max(), TIME_FORMAT))
-        day = max(local_midnight(last), today - timedelta(days=MAX_CATCHUP_DAYS))
+        return window[-1:]
+    days = pd.to_datetime(existing['interval_end']).sub(pd.Timedelta(minutes=15)).dt.strftime('%Y-%m-%d')
+    cols = [c for c in CORE_COLUMNS if c in existing]
+    complete = existing.assign(day=days, ok=existing[cols].notna().all(axis=1)).groupby('day').ok.agg(['all', 'size'])
+    complete = set(complete[(complete['all']) & (complete['size'] >= 92)].index)   # 92: the spring-forward day
+    return [d for d in window if d.strftime('%Y-%m-%d') not in complete]
+
+
+def catch_up(api, today):
+    """Pull recent complete days that are missing or incomplete (up to a week)."""
+    existing = pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame()
     rows, micro = [], []
-    while day < today:
+    for day in days_to_pull(existing, today):
         rows += fetch_telemetry(api, day, 'day', bool(api.ev_serial))
         payload = api.get('/telemetry/production_micro',
                           {'granularity': 'day', 'start_at': int(day.timestamp())}, optional=True)
@@ -276,7 +292,6 @@ def catch_up(api, today):
             micro.append({'interval_end': to_local(interval['end_at']),
                           'production_wh': interval.get('enwh'), 'power_w': interval.get('powr'),
                           'devices_reporting': interval.get('devices_reporting')})
-        day = local_midnight(day + timedelta(days=1, hours=2))
     print(f"Daily pull: {merge_csv(DATA_FILE, rows, 'interval_end')} 15-min and "
           f"{merge_csv(MICRO_FILE, micro, 'interval_end')} 5-min intervals")
 
