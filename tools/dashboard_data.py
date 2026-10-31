@@ -11,6 +11,9 @@ The dashboard reads small CSVs, not the raw history, so this script writes:
     ev_monthly.csv           EV session kWh vs Enphase's daily figure, per month
     car_monthly.csv          miles and the car's own kWh (Audi trips) vs home charging, per month
     car_buckets.csv          the car's efficiency by trip speed and by trip length
+    solar_clear_days.csv     clear-day production per month and year (for degradation)
+    battery_profile.csv      average battery charge by time of day, per season
+    pool_daily.csv           pool and air temperatures, pump and heater hours, weather, per day
 
 Usage (from the home_data checkout):
     python ../tools/dashboard_data.py OUT_DIR
@@ -104,6 +107,63 @@ def car_buckets():
     return out[['dimension', 'order', 'bucket', 'trips', 'miles', 'kwh', 'mi_per_kwh']]
 
 
+def solar_clear_days():
+    """Typical clear-day production per calendar month and year: the 90th
+    percentile of daily production-meter kWh in that month. Comparing the same
+    month across years shows lasting changes (ageing, soiling, shading) better
+    than totals, which swing with the weather. Months with the 2026 string
+    outage read low for that reason."""
+    p = pd.read_csv('production_meter_5min.csv.gz')
+    day = p.groupby(p.interval_end.str[:10]).meter_w.sum() / 12000
+    d = day.rename('kwh').reset_index().rename(columns={'interval_end': 'date'})
+    d['year'], d['month'] = d.date.str[:4], d.date.str[5:7].astype(int)
+    out = d.groupby(['year', 'month']).agg(clear_day_kwh=('kwh', lambda x: x.quantile(0.9)), days=('kwh', 'size')).reset_index()
+    out['clear_day_kwh'] = out.clear_day_kwh.round(1)
+    return out[out.days >= 20]   # skip partial months (install, the current month)
+
+
+def battery_profile():
+    """Average state of charge of the six batteries by time of day, per season,
+    over all years (Apr 2023 on)."""
+    b = pd.read_csv('battery_5min.csv.gz')
+    s = b.groupby(['interval_end', 'tz']).soc_pct.mean().reset_index()
+    t = pd.to_datetime(s.interval_end)
+    seasons = {12: 'Winter', 1: 'Winter', 2: 'Winter', 3: 'Spring', 4: 'Spring', 5: 'Spring',
+               6: 'Summer', 7: 'Summer', 8: 'Summer', 9: 'Fall', 10: 'Fall', 11: 'Fall'}
+    s['season'] = t.dt.month.map(seasons)
+    s['time'] = t.dt.strftime('%H:%M')
+    out = s.groupby(['season', 'time']).soc_pct.agg(['mean', lambda x: x.quantile(0.1), lambda x: x.quantile(0.9)]).reset_index()
+    out.columns = ['season', 'time', 'soc_pct', 'soc_p10', 'soc_p90']
+    out[['soc_pct', 'soc_p10', 'soc_p90']] = out[['soc_pct', 'soc_p10', 'soc_p90']].round(1)
+    return out
+
+
+def pool_daily():
+    """One row per day from the pool and weather logs (5-min, Apr 2026 on).
+    Hours are summed from each reading's duration (capped at 10 minutes, so a
+    logging gap doesn't count as running). Pool temperature only counts while
+    the pump runs, since the sensor sits in the pipe."""
+    p = pd.read_csv('pool_history.csv', low_memory=False)
+    p['t'] = pd.to_datetime(p.timestamp)
+    p['hours'] = (p.t.shift(-1) - p.t).dt.total_seconds().clip(upper=600).fillna(300) / 3600
+    p['date'] = p.t.dt.strftime('%Y-%m-%d')
+    on = lambda col, value='ON': (p[col] == value) * p.hours
+    p['pump_h'], p['gas_h'], p['spill_h'] = on('pool_pump'), on('pool_heater'), on('spillover')
+    p['hp_h'] = on('heat_pump')
+    p['pool_temp_running'] = p.pool_temp.where(p.pool_pump == 'ON')
+    # The pool's own air sensor reads high in sun, so outdoor temperature comes from the weather log;
+    # the lowest pool reading is skipped because water sitting in the pipe reads cold at pump start.
+    d = p.groupby('date').agg(pool_temp_max=('pool_temp_running', 'max'),
+                              pump_hours=('pump_h', 'sum'), gas_heater_hours=('gas_h', 'sum'),
+                              heat_pump_hours=('hp_h', 'sum'), spillover_hours=('spill_h', 'sum'))
+    w = pd.read_csv('weather_history.csv')
+    w['date'] = w.timestamp.str[:10]
+    wd = w.groupby('date').agg(outdoor_temp_max=('temp_actual', 'max'), outdoor_temp_min=('temp_actual', 'min'),
+                               clouds_pct=('clouds_percent', 'mean'), rain_mm=('rain_1h_mm', lambda x: x.sum() / 12))
+    d = d.join(wd, how='left').reset_index().round(1)
+    return d.iloc[1:-1]   # first and last days are partial
+
+
 def washed_panel_ratio():
     """Daily output of the washed panels divided by the unwashed panels on the
     same string, averaged per month. Only clear days with the whole string
@@ -143,7 +203,9 @@ def main():
     for name, build in [('monthly_energy', monthly_energy), ('arrays_2025', arrays_2025),
                         ('panels_2025', panels_2025), ('washed_panel_ratio', washed_panel_ratio),
                         ('string_outage', string_outage), ('ev_monthly', ev_monthly),
-                        ('car_monthly', car_monthly), ('car_buckets', car_buckets)]:
+                        ('car_monthly', car_monthly), ('car_buckets', car_buckets),
+                        ('solar_clear_days', solar_clear_days), ('battery_profile', battery_profile),
+                        ('pool_daily', pool_daily)]:
         build().to_csv(os.path.join(out, f'{name}.csv'), index=False)
         print(f"wrote {out}/{name}.csv")
 
