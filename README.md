@@ -48,7 +48,7 @@ named files and pushes with retries. Python dependencies are in
 ## Home Assistant
 
 The Pi's AppDaemon apps (`homeassistant/appdaemon/`) keep themselves up to
-date: the `updater` app pulls `apps.yaml` and `home_export.py` from `main`
+date: the `updater` app pulls `apps.yaml` and the apps it lists from `main`
 every 30 minutes, so **changes deploy by merging to main**. What is recorded
 is set by the patterns in `apps.yaml`. Setup is in `homeassistant/README.md`.
 

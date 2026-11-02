@@ -5,7 +5,7 @@ the cloud loggers can't get: per-panel solar, Lennox HVAC zones, Flume water.
 
 ## Apps (`appdaemon/`)
 
-Two AppDaemon apps run in the AppDaemon add-on:
+Three AppDaemon apps run in the AppDaemon add-on:
 
 - **`home_export`** records selected entities to a local daily CSV:
   whole-home and battery power in `sample_fast` every minute, other readings
@@ -16,8 +16,15 @@ Two AppDaemon apps run in the AppDaemon add-on:
   `timestamp, entity_id, attribute, value`), retrying failed days. It also
   uploads `ha/entities.txt` listing all entity ids, marked `f` (fast),
   `s` (sampled) or `c` (on change).
+- **`outage_hvac`** turns the Lennox zones off when the Enphase grid-status
+  sensor shows an outage (for a minute), so the battery lasts longer, and back
+  to their previous modes once the grid has been back for 5 minutes. Zones
+  someone changes during the outage are left alone. It posts a Home Assistant
+  notification each time. To try it without an outage, create a Toggle helper
+  named `simulate_grid_outage` (Settings → Devices & services → Helpers) and
+  switch it on, then off.
 - **`updater`** checks this repo every 30 minutes and pulls new versions of
-  `apps.yaml` and `home_export.py` from `main`, which AppDaemon then reloads.
+  the files listed under it in `apps.yaml` from `main`, which AppDaemon then reloads.
   **Changes deploy by merging to `main`.** The updater never updates itself or
   `secrets.yaml`.
 
