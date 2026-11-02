@@ -1,0 +1,54 @@
+name: Weekly Report
+
+# Every Monday afternoon (after the nightly energy pull has added Sunday),
+# writes reports/weekly/<week start>.md and latest.md in home_data for the
+# week just ended. See weekly_report.py.
+on:
+  schedule:
+    - cron: '23 23 * * 1'   # Mondays ~3:23-4:23 PM Pacific
+  workflow_dispatch:
+    inputs:
+      day:
+        description: 'A date inside the week to report (YYYY-MM-DD); blank for last week'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemetry
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Checkout Private Data Repo
+        uses: ./.github/actions/checkout-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Report
+        working-directory: data
+        env:
+          DAY: ${{ inputs.day }}
+        run: python ../weekly_report.py $DAY
+
+      - name: Commit and Push Report
+        uses: ./.github/actions/push-data
+        with:
+          paths: reports
+          message: Weekly report
