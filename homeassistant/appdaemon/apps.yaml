@@ -11,6 +11,7 @@ updater:
   files:
     homeassistant/appdaemon/apps.yaml: apps.yaml
     homeassistant/appdaemon/home_export.py: home_export.py
+    homeassistant/appdaemon/outage_hvac.py: outage_hvac.py
 
 home_export:
   module: home_export
@@ -74,3 +75,16 @@ home_export:
     - "*_alert*"
     - "*wt_env*"
     - "*_last_reported"
+
+# Turns the HVAC zones off during a grid outage and back on afterwards
+# (see outage_hvac.py).
+outage_hvac:
+  module: outage_hvac
+  class: OutageHvac
+  grid_entity: binary_sensor.iq_system_controller_enpower_482251014142_grid_status
+  zones:
+    - "climate.bedrooms_*"
+    - "climate.shared_spaces_*"
+  off_after_seconds: 60          # grid down this long before turning zones off
+  restore_after_seconds: 300     # grid back this long before turning them on
+  test_entity: input_boolean.simulate_grid_outage   # optional helper for testing
