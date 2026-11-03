@@ -8,8 +8,10 @@ Records two kinds of data to a local daily CSV:
   `interval_minutes` minutes, aligned to the clock; `sample_fast` entities
   (whole-home and battery power) every `fast_interval_minutes`.
 
-Once a day it uploads finished days, gzip-compressed, to the private
-home_data repo via the GitHub API; uploads that fail are retried on the next run, so no day is lost.
+Every hour it uploads any finished days, gzip-compressed, to the private
+home_data repo via the GitHub API; uploads that fail are retried the next
+hour, so no day is lost. (Hourly rather than at a set time: AppDaemon's daily
+timer slips an hour at daylight-saving changes, which delayed a day's upload.)
 On startup it also uploads ha/entities.txt: every entity id (no values),
 marked `f` (fast), `s` (sampled) or `c` (on change), to help tune the patterns.
 
@@ -62,13 +64,12 @@ class HomeExport(hass.Hass):
                 now = self.datetime()
                 first = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes - now.minute % minutes)
                 self.run_every(self.sample, first, minutes * 60, entities=entities)
-        self.run_daily(self.upload_finished_days, '00:20:00')
+        self.run_every(self.upload_finished_days, 'now+120', 3600)
 
         # Record where every watched entity starts, so on/off spans are known
         # from the first minute rather than from its first change.
         self.run_in(self.record_watched, 5)
         self.run_in(self.upload_entity_list, 30)
-        self.run_in(self.upload_finished_days, 60)
         self.log(f"Sampling {len(self.fast)} entities every {self.fast_interval} min and "
                  f"{len(self.sampled)} every {self.interval} min; recording every change of {len(self.watched)}")
 
