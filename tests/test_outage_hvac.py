@@ -17,6 +17,11 @@ def make_app(tmp_path, grid='on', zones=None, test='off'):
         'climate.shared_spaces_loft': 'cool', 'climate.pool_set_point': 'heat'}
     app.calls, app.listeners = [], []
     app.log = lambda *a, **k: None
+    app.list_services = lambda: [{'domain': 'notify', 'service': 'mobile_app_phone'},
+                                 {'domain': 'notify', 'service': 'notify'},
+                                 {'domain': 'light', 'service': 'turn_on'}]
+    app.states['sensor.battery'] = '64.0'
+    app.args['battery_entity'] = 'sensor.battery'
     app.listen_state = lambda cb, entity, **kw: app.listeners.append((entity, kw))
 
     def get_state(entity):
@@ -45,7 +50,7 @@ def test_outage_turns_zones_off_and_restores_them(tmp_path):
     app.states[GRID] = 'off'
     app.on_grid(GRID, None, 'on', 'off', {})
     assert sorted(hvac_calls(app)) == [('climate.bedrooms_aiden', 'off'), ('climate.shared_spaces_loft', 'off')]
-    assert json.load(open(app.state_file)) == {'climate.bedrooms_aiden': 'heat_cool', 'climate.shared_spaces_loft': 'cool'}
+    assert json.load(open(app.state_file)) == {'zones': {'climate.bedrooms_aiden': 'heat_cool', 'climate.shared_spaces_loft': 'cool'}}
     assert app.climate['climate.pool_set_point'] == 'heat'   # pool isn't an HVAC zone
 
     app.calls.clear()
@@ -60,7 +65,7 @@ def test_restart_during_outage_keeps_the_real_modes(tmp_path):
     app = make_app(tmp_path, grid='off')
     app.initialize()                                   # catches an outage already in progress
     saved = app.saved()
-    assert saved == {'climate.bedrooms_aiden': 'heat_cool', 'climate.shared_spaces_loft': 'cool'}
+    assert saved == {'zones': {'climate.bedrooms_aiden': 'heat_cool', 'climate.shared_spaces_loft': 'cool'}}
 
     restarted = make_app(tmp_path, grid='off', zones=dict(app.climate))
     restarted.initialize()                             # zones now read "off"; must not overwrite
@@ -93,3 +98,18 @@ def test_unavailable_grid_does_nothing_and_test_switch_works(tmp_path):
     app.states[TEST] = 'off'
     app.check()
     assert len(hvac_calls(app)) == 4 and not app.saved()
+
+
+def pushes(app):
+    return [kw['message'] for s, kw in app.calls if s == 'notify/mobile_app_phone']
+
+
+def test_notifies_phones_with_battery_level_even_when_hvac_already_off(tmp_path):
+    app = make_app(tmp_path, grid='off', zones={'climate.bedrooms_aiden': 'off'})
+    app.initialize()
+    assert pushes(app) == ['Grid is down (battery 64%): HVAC was already off.']
+    app.initialize()                                   # outage already handled: no repeat alert
+    assert len(pushes(app)) == 1
+    app.states[GRID] = 'on'
+    app.check()
+    assert pushes(app)[-1].startswith('Grid is back (battery 64%)') and not app.saved()
