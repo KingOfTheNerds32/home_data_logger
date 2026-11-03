@@ -11,7 +11,7 @@ Three AppDaemon apps run in the AppDaemon add-on:
   whole-home and battery power in `sample_fast` every minute, other readings
   in `sample` every 5 minutes, and states in `on_change` every time
   they change (exact run times for HVAC zones, pool equipment, battery mode,
-  grid status). Each night it uploads finished days, gzip-compressed, to the
+  grid status). Every hour it uploads any finished days, gzip-compressed, to the
   private `home_data` repo at `ha/YYYY-MM/YYYY-MM-DD.csv.gz` (long format:
   `timestamp, entity_id, attribute, value`), retrying failed days. It also
   uploads `ha/entities.txt` listing all entity ids, marked `f` (fast),
