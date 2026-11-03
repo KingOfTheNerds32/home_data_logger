@@ -11,7 +11,7 @@ data goes to the private `home_data` repo, whose README describes every file.
 | `sunlight_logger.py` | Daily sunlight, cloud, temperature and rain since install (Open-Meteo archive), to compare solar output on equal sun | GitHub Actions (with the energy logger) |
 | `weekly_report.py` | Weekly summary (solar vs sunlight, battery overnight, car charging, pool, grid, data gaps) written to `home_data/reports/weekly/` | GitHub Actions, Mondays |
 | `watchdog.py` | Alerts when any source goes stale or part of the solar array stops reporting | GitHub Actions |
-| `homeassistant/` | AppDaemon apps on the Home Assistant Pi: 1- and 5-min snapshots and every state change, uploaded nightly (see its README) | Raspberry Pi |
+| `homeassistant/` | AppDaemon apps on the Home Assistant Pi: 1- and 5-min snapshots and every state change, uploaded after each day ends; turns HVAC off during grid outages (see its README) | Raspberry Pi |
 | `tools/` | Scripts run by hand: importing Enlighten report exports, building the dashboard's summary tables | Locally |
 | `tests/` | Unit tests | GitHub Actions, on every pull request |
 | `investigation/`, `docs/` | One-off diagnostics and notes from figuring out each data source | By hand |
