@@ -87,4 +87,7 @@ outage_hvac:
     - "climate.shared_spaces_*"
   off_after_seconds: 60          # grid down this long before turning zones off
   restore_after_seconds: 300     # grid back this long before turning them on
+  battery_entity: sensor.gateway_envoy_202248184361_battery   # shown in notifications
   test_entity: input_boolean.simulate_grid_outage   # optional helper for testing
+  # Phone alerts go to every phone with the Home Assistant Companion app; to
+  # pick specific ones instead, list them, e.g.  notify: [notify/mobile_app_my_phone]

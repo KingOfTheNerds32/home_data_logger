@@ -19,8 +19,9 @@ Three AppDaemon apps run in the AppDaemon add-on:
 - **`outage_hvac`** turns the Lennox zones off when the Enphase grid-status
   sensor shows an outage (for a minute), so the battery lasts longer, and back
   to their previous modes once the grid has been back for 5 minutes. Zones
-  someone changes during the outage are left alone. It posts a Home Assistant
-  notification each time. To try it without an outage, create a Toggle helper
+  someone changes during the outage are left alone. Each time it posts a Home
+  Assistant notification and a push alert (with the battery level) to every
+  phone signed in to the Home Assistant Companion app. To try it without an outage, create a Toggle helper
   named `simulate_grid_outage` (Settings → Devices & services → Helpers) and
   switch it on, then off.
 - **`updater`** checks this repo every 30 minutes and pulls new versions of
