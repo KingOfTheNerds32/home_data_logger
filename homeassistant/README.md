@@ -26,7 +26,7 @@ Four AppDaemon apps run in the AppDaemon add-on:
   switch it on, then off.
 - **`burst_recorder`** reads the Enphase gateway's meters and batteries
   every second, all day (until the `until` date in `apps.yaml`)
-  and uploads each morning to `home_data` at `ha/burst/`. Read-only. Needs a
+  and uploads each finished hour to `home_data` at `ha/burst/<date>/<hour>.csv.gz`. Read-only. Needs a
   gateway token from entrez.enphaseenergy.com in `secrets.yaml` as
   `envoy_token: <token>`; it stays idle without one.
 - **`updater`** checks this repo every 30 minutes and pulls new versions of
