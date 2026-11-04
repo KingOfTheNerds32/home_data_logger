@@ -7,10 +7,11 @@ morning while the battery charges).
 Each second it reads, from the gateway on the home network:
 - /ivp/meters/readings   instant power per meter (production, net grid)
 - /ivp/ensemble/power    instant power per battery
-and appends rows to a local CSV (long format: timestamp, source, value; watts,
+and appends rows to a local hourly CSV (long format: timestamp, source, value; watts,
 or % for soc; signs as the gateway reports them, normally net grid
-+ import and battery + discharge). After the window it uploads the day, gzip-compressed, to
-home_data at ha/burst/YYYY-MM-DD.csv.gz, retrying hourly.
++ import and battery + discharge). Each finished hour is uploaded,
+gzip-compressed, to home_data at ha/burst/YYYY-MM-DD/HH.csv.gz within about
+5 minutes, retrying until it succeeds.
 
 Read-only: it changes nothing. Needs `envoy_token: <token>` in AppDaemon's
 secrets.yaml (a gateway token from entrez.enphaseenergy.com); without it the
@@ -77,7 +78,7 @@ class BurstRecorder(hass.Hass):
             return
         self.thread = threading.Thread(target=self.loop, daemon=True)
         self.thread.start()
-        self.run_every(self.upload, 'now+300', 3600)
+        self.run_every(self.upload, 'now+120', 300)
         self.log(f"Burst recorder: every second {self.start}-{self.end} from {self.host}"
                  + (f" until {self.until}" if self.until else ""))
 
@@ -121,7 +122,7 @@ class BurstRecorder(hass.Hass):
                     self.stop.wait(min(300, errors * 5))
             if rows:
                 stamp = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                with open(os.path.join(self.data_dir, f"{now:%Y-%m-%d}.csv"), 'a') as f:
+                with open(os.path.join(self.data_dir, f"{now:%Y-%m-%d_%H}.csv"), 'a') as f:
                     if f.tell() == 0:
                         f.write("timestamp,source,value\n")
                     f.writelines(f"{stamp},{s},{v}\n" for s, v in rows)
@@ -131,17 +132,15 @@ class BurstRecorder(hass.Hass):
     def upload(self, kwargs):
         if not self.token:
             return
-        now = dt.datetime.now()
+        current = f"{dt.datetime.now():%Y-%m-%d_%H}.csv"
         for name in sorted(os.listdir(self.data_dir)):
-            if not name.endswith('.csv'):
-                continue
-            day = name[:-4]
-            if day == f"{now:%Y-%m-%d}" and now.time() < self.end:
-                continue  # still recording
+            if not name.endswith('.csv') or name >= current:
+                continue  # the current hour is still being written
+            day, hour = name[:-4].split('_')
             path = os.path.join(self.data_dir, name)
             with open(path, 'rb') as f:
                 content = gzip.compress(f.read(), mtime=0)
-            if HomeExport.put_file(self, f"{self.folder}/{name}.gz", content, f"HA burst {day}"):
+            if HomeExport.put_file(self, f"{self.folder}/{day}/{hour}.csv.gz", content, f"HA burst {day} {hour}h"):
                 os.rename(path, path + '.uploaded')
 
 
