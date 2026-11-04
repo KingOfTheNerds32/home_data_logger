@@ -5,7 +5,7 @@ the cloud loggers can't get: per-panel solar, Lennox HVAC zones, Flume water.
 
 ## Apps (`appdaemon/`)
 
-Three AppDaemon apps run in the AppDaemon add-on:
+Four AppDaemon apps run in the AppDaemon add-on:
 
 - **`home_export`** records selected entities to a local daily CSV:
   whole-home and battery power in `sample_fast` every minute, other readings
@@ -24,6 +24,11 @@ Three AppDaemon apps run in the AppDaemon add-on:
   phone signed in to the Home Assistant Companion app. To try it without an outage, create a Toggle helper
   named `simulate_grid_outage` (Settings → Devices & services → Helpers) and
   switch it on, then off.
+- **`burst_recorder`** reads the Enphase gateway's meters and batteries
+  every second from 6:45 to 9:30 AM (until the `until` date in `apps.yaml`)
+  and uploads each morning to `home_data` at `ha/burst/`. Read-only. Needs a
+  gateway token from entrez.enphaseenergy.com in `secrets.yaml` as
+  `envoy_token: <token>`; it stays idle without one.
 - **`updater`** checks this repo every 30 minutes and pulls new versions of
   the files listed under it in `apps.yaml` from `main`, which AppDaemon then reloads.
   **Changes deploy by merging to `main`.** The updater never updates itself or

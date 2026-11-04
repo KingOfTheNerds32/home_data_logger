@@ -12,6 +12,7 @@ updater:
     homeassistant/appdaemon/apps.yaml: apps.yaml
     homeassistant/appdaemon/home_export.py: home_export.py
     homeassistant/appdaemon/outage_hvac.py: outage_hvac.py
+    homeassistant/appdaemon/burst_recorder.py: burst_recorder.py
 
 home_export:
   module: home_export
@@ -91,3 +92,14 @@ outage_hvac:
   test_entity: input_boolean.simulate_grid_outage   # optional helper for testing
   # Phone alerts go to every phone with the Home Assistant Companion app; to
   # pick specific ones instead, list them, e.g.  notify: [notify/mobile_app_my_phone]
+
+# Reads the gateway's meters and batteries every second, 6:45-9:30 AM, to
+# catch fast power swings (see burst_recorder.py). Needs envoy_token in
+# secrets.yaml.
+burst_recorder:
+  module: burst_recorder
+  class: BurstRecorder
+  envoy_host: envoy.local
+  start: "06:45"
+  end: "09:30"
+  until: 2026-11-14
