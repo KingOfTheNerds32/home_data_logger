@@ -1,6 +1,6 @@
 """
 Burst recorder (AppDaemon app): reads the Enphase gateway's local meters and
-batteries every second during a daily window, to see fast swings that the
+batteries every second (all day by default, or a set daily window), to see fast swings that the
 1-minute export can't (e.g. grid import jumping ~3 kW every 3 s in the
 morning while the battery charges).
 
@@ -58,8 +58,8 @@ class BurstRecorder(hass.Hass):
 
     def initialize(self):
         self.host = self.args.get('envoy_host', 'envoy.local')
-        self.start = dt.time.fromisoformat(self.args.get('start', '06:45'))
-        self.end = dt.time.fromisoformat(self.args.get('end', '09:30'))
+        self.start = dt.time.fromisoformat(self.args.get('start', '00:00'))
+        self.end = dt.time.fromisoformat(self.args.get('end', '23:59:59'))
         self.until = dt.date.fromisoformat(str(self.args['until'])) if self.args.get('until') else None
         self.repo = self.args.get('repo', 'KingOfTheNerds32/home_data')
         self.folder = self.args.get('folder', 'ha/burst')
@@ -117,6 +117,8 @@ class BurstRecorder(hass.Hass):
                 errors += 1
                 if errors in (1, 60):
                     self.log(f"Gateway read failed: {type(e).__name__}", level='WARNING')
+                if errors >= 10:          # gateway struggling or offline: back off
+                    self.stop.wait(min(300, errors * 5))
             if rows:
                 stamp = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 with open(os.path.join(self.data_dir, f"{now:%Y-%m-%d}.csv"), 'a') as f:

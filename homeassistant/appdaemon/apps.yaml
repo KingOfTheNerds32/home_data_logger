@@ -93,13 +93,13 @@ outage_hvac:
   # Phone alerts go to every phone with the Home Assistant Companion app; to
   # pick specific ones instead, list them, e.g.  notify: [notify/mobile_app_my_phone]
 
-# Reads the gateway's meters and batteries every second, 6:45-9:30 AM, to
-# catch fast power swings (see burst_recorder.py). Needs envoy_token in
-# secrets.yaml.
+# Reads the gateway's meters and batteries every second, all day, to catch
+# fast power swings (see burst_recorder.py). Needs envoy_token in
+# secrets.yaml. Narrow start/end to shorten the window.
 burst_recorder:
   module: burst_recorder
   class: BurstRecorder
   envoy_host: envoy.local
-  start: "06:45"
-  end: "09:30"
+  start: "00:00"
+  end: "23:59:59"
   until: 2026-11-14
