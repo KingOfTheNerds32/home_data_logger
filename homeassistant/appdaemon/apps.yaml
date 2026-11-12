@@ -102,4 +102,3 @@ burst_recorder:
   envoy_host: envoy.local
   start: "00:00"
   end: "23:59:59"
-  until: 2026-11-14

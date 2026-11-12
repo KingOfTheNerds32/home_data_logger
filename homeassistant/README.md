@@ -25,7 +25,7 @@ Four AppDaemon apps run in the AppDaemon add-on:
   named `simulate_grid_outage` (Settings → Devices & services → Helpers) and
   switch it on, then off.
 - **`burst_recorder`** reads the Enphase gateway's meters and batteries
-  every second, all day (until the `until` date in `apps.yaml`)
+  every second, all day (an optional `until` date in `apps.yaml` stops it)
   and uploads each finished hour to `home_data` at `ha/burst/<date>/<hour>.csv.gz`. Read-only. Needs a
   gateway token from entrez.enphaseenergy.com in `secrets.yaml` as
   `envoy_token: <token>`; it stays idle without one.
