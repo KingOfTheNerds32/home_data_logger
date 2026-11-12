@@ -29,6 +29,8 @@ home_export:
     - "sensor.gateway_envoy_*_production_ct_power"
     - "sensor.gateway_envoy_*_lifetime_*"       # cumulative counters: exact energy between readings
     - "sensor.battery_encharge_*[0-9]_power"    # per-battery charge/discharge power
+    - "sensor.flume_sensor_home_current"        # water flow rate (gal/min)
+    - "sensor.flume_sensor_home_current_day"    # gallons so far today
   # Snapshot every interval: readings such as temperatures and per-panel output.
   sample:
     - "sensor.gateway_envoy_*_battery"          # battery state of charge (%)
@@ -41,8 +43,6 @@ home_export:
     - "sensor.*_discharge_air_temperature"
     - "sensor.*shared_spaces_outdoor_temperature"
     - "sensor.*_inverter_energy"                # AC compressor energy (needs diagnostics)
-    - "sensor.flume_sensor_home_current"        # water flow rate
-    - "sensor.flume_sensor_home_current_day"
     - "sensor.pool_temp"
     - "sensor.spa_temp"
     - "sensor.air_temp"

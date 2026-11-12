@@ -17,7 +17,7 @@ concurrency:
 jobs:
   energy:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -58,11 +58,23 @@ jobs:
           LONG: ${{ secrets.LONG }}
         run: python ../sunlight_logger.py
 
+      # Gallons per minute from Flume's cloud API (skips until the FLUME_*
+      # secrets are set). Independent of Enphase.
+      - name: Pull Flume Water Data
+        if: always()
+        working-directory: data
+        env:
+          FLUME_CLIENT_ID: ${{ secrets.FLUME_CLIENT_ID }}
+          FLUME_CLIENT_SECRET: ${{ secrets.FLUME_CLIENT_SECRET }}
+          FLUME_USERNAME: ${{ secrets.FLUME_USERNAME }}
+          FLUME_PASSWORD: ${{ secrets.FLUME_PASSWORD }}
+        run: python ../flume_logger.py
+
       # Always push, so the request count in enphase_state.json is kept even
       # if the pull failed partway.
       - name: Commit and Push Data
         if: always()
         uses: ./.github/actions/push-data
         with:
-          paths: energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json sunlight_daily.csv
+          paths: energy_history.csv production_5min.csv ev_sessions.csv energy_daily.csv battery_days.csv enphase_state.json sunlight_daily.csv water flume_state.json
           message: Energy Update
