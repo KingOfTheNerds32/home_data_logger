@@ -10,7 +10,7 @@ Records two kinds of data to a local daily CSV:
 
 Every hour it uploads any finished days, gzip-compressed, to the private
 home_data repo via the GitHub API; uploads that fail are retried the next
-hour, so no day is lost. (Hourly rather than at a set time: AppDaemon's daily
+hour, so no day is lost. Each day's local file is deleted once uploaded. (Hourly rather than at a set time: AppDaemon's daily
 timer slips an hour at daylight-saving changes, which delayed a day's upload.)
 On startup it also uploads ha/entities.txt: every entity id (no values),
 marked `f` (fast), `s` (sampled) or `c` (on change), to help tune the patterns.
@@ -38,6 +38,13 @@ ATTRIBUTES = {
 }
 
 
+def remove_uploaded(folder):
+    """Delete local copies kept by older versions after a successful upload."""
+    for name in os.listdir(folder):
+        if name.endswith('.uploaded'):
+            os.remove(os.path.join(folder, name))
+
+
 class HomeExport(hass.Hass):
 
     def initialize(self):
@@ -49,6 +56,7 @@ class HomeExport(hass.Hass):
         self.token = self.args['github_token']
         self.data_dir = os.path.join(os.path.dirname(self.app_dir), 'home_export')
         os.makedirs(self.data_dir, exist_ok=True)
+        remove_uploaded(self.data_dir)
 
         self.fast = self.matching(self.args.get('sample_fast', []))
         self.sampled = [e for e in self.matching(self.args.get('sample', [])) if e not in self.fast]
@@ -130,7 +138,7 @@ class HomeExport(hass.Hass):
                 # Compressed ~8x; pandas reads .csv.gz directly.
                 content = gzip.compress(f.read(), mtime=0)
             if self.put_file(f"{self.folder}/{name[:7]}/{name}.gz", content, f"HA export {name[:-4]}"):
-                os.rename(path, path + '.uploaded')
+                os.remove(path)  # uploaded: no need to keep a local copy
 
     def upload_entity_list(self, kwargs):
         ids = sorted(self.get_state().keys())
