@@ -11,7 +11,7 @@ and appends rows to a local hourly CSV (long format: timestamp, source, value; w
 or % for soc; signs as the gateway reports them, normally net grid
 + import and battery + discharge). Each finished hour is uploaded,
 gzip-compressed, to home_data at ha/burst/YYYY-MM-DD/HH.csv.gz within about
-5 minutes, retrying until it succeeds.
+5 minutes, retrying until it succeeds; the local copy is then deleted.
 
 Read-only: it changes nothing. Needs `envoy_token: <token>` in AppDaemon's
 secrets.yaml (a gateway token from entrez.enphaseenergy.com); without it the
@@ -29,7 +29,7 @@ import urllib.request
 
 import appdaemon.plugins.hass.hassapi as hass
 
-from home_export import HomeExport
+from home_export import HomeExport, remove_uploaded
 
 
 def parse_meters(readings, types):
@@ -66,6 +66,7 @@ class BurstRecorder(hass.Hass):
         self.folder = self.args.get('folder', 'ha/burst')
         self.data_dir = os.path.join(os.path.dirname(self.app_dir), 'burst_recorder')
         os.makedirs(self.data_dir, exist_ok=True)
+        remove_uploaded(self.data_dir)
         config_dir = os.path.dirname(self.app_dir)
         self.envoy_token = read_token_key(os.path.join(config_dir, 'secrets.yaml'), 'envoy_token')
         self.token = read_token_key(os.path.join(config_dir, 'secrets.yaml'), 'github_home_data_token')
@@ -141,7 +142,7 @@ class BurstRecorder(hass.Hass):
             with open(path, 'rb') as f:
                 content = gzip.compress(f.read(), mtime=0)
             if HomeExport.put_file(self, f"{self.folder}/{day}/{hour}.csv.gz", content, f"HA burst {day} {hour}h"):
-                os.rename(path, path + '.uploaded')
+                os.remove(path)  # uploaded: no need to keep a local copy
 
 
 def read_token_key(path, key):
