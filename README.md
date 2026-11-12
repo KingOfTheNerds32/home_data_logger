@@ -8,6 +8,7 @@ data goes to the private `home_data` repo, whose README describes every file.
 |---|---|---|
 | `main.py`, `pool_logger.py`, `weather_logger.py` | Pool equipment (iAquaLink) and weather (OpenWeather), every 5 min, into monthly files (`pool/`, `weather/`, run log `runs/`; see `monthly.py`) | GitHub Actions |
 | `energy_logger.py` | Enphase cloud: daily 15-min and 5-min data, EV sessions, daily totals, history backfill | GitHub Actions |
+| `flume_logger.py` | Water: gallons per minute from Flume's cloud API (the finest it offers), daily, with history backfill, into `water/YYYY-MM.csv` | GitHub Actions (with the energy logger) |
 | `sunlight_logger.py` | Daily sunlight, cloud, temperature and rain since install (Open-Meteo archive), to compare solar output on equal sun | GitHub Actions (with the energy logger) |
 | `weekly_report.py` | Weekly summary (solar vs sunlight, battery overnight, car charging, pool, grid, data gaps) written to `home_data/reports/weekly/` | GitHub Actions, Mondays |
 | `watchdog.py` | Alerts when any source goes stale or part of the solar array stops reporting | GitHub Actions |
@@ -83,6 +84,8 @@ python -m pytest -q
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | Enphase developer app |
 | `ENPHASE_REFRESH_TOKEN`, `ENPHASE_SYSTEM_ID`, `ENPHASE_EV_SERIAL` | Written automatically by the Enphase workflows |
 | `GH_SECRETS_TOKEN` | Lets the Enphase workflows update the token secret (Secrets: read/write on this repo) |
+| `FLUME_CLIENT_ID`, `FLUME_CLIENT_SECRET` | Flume API client (Flume portal → Settings → API access) |
+| `FLUME_USERNAME`, `FLUME_PASSWORD` | Flume account login |
 | `LENNOX_USER`, `LENNOX_PASS` | Lennox probe only |
 
 The Home Assistant export uses its own token, stored on the Pi in
