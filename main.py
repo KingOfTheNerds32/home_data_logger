@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime
 import pytz
 
+import monthly
+
 # Import the functions from your other files
 from pool_logger import harvest_pool_data
 from weather_logger import harvest_weather_data
@@ -37,11 +39,10 @@ async def main():
 
     # 2. CALCULATE TIME SINCE LAST SUCCESSFUL POOL SYNC
     last_sync_text = "No previous successful sync found"
-    status_file = 'execution_log.csv'
-    
-    if os.path.exists(status_file):
+    # Run log: runs/YYYY-MM.csv (the last two months cover any streak or gap).
+    df_status = monthly.read('runs', months=2)
+    if df_status is not None:
         try:
-            df_status = pd.read_csv(status_file)
             # Filter for rows where pool was OK and timestamp is not null
             successes = df_status[(df_status['pool_status'] == 'OK') & (df_status['timestamp'].notnull())]
             
@@ -111,15 +112,14 @@ async def main():
         'pool_status': 'OK' if results["Pool"] else 'FAIL',
         'weather_status': 'OK' if results["Weather"] else 'FAIL'
     }
-    pd.DataFrame([status_row]).to_csv(status_file, mode='a', 
-                                     header=not os.path.exists(status_file), index=False)
+    monthly.append('runs', pd.DataFrame([status_row]), unified_ts)
 
     # 6. DECIDE WHETHER TO ALERT
     # Single failures are normal (iAquaLink is flaky) and heal on the next run,
     # so only alert once a service has been down for several runs in a row.
     alerts = []
     try:
-        df_status = pd.read_csv(status_file)
+        df_status = monthly.read('runs', months=2)
         for service, column in (("Pool", 'pool_status'), ("Weather", 'weather_status')):
             streak = consecutive_failures(df_status, column)
             if streak >= ALERT_THRESHOLD and (streak - ALERT_THRESHOLD) % ALERT_REPEAT == 0:

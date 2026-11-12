@@ -18,3 +18,13 @@ def test_home_assistant_export_freshness(tmp_path, monkeypatch):
     (tmp_path / 'ha' / '2026-10' / '2026-10-28.csv.gz').write_bytes(b'')
     assert watchdog.check_home_assistant(date(2026, 10, 30))[1] is None      # one missed night is fine
     assert watchdog.check_home_assistant(date(2026, 10, 31))[1] is not None  # three days behind
+
+
+def test_home_assistant_check_ignores_hourly_burst_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'ha' / '2026-11').mkdir(parents=True)
+    (tmp_path / 'ha' / '2026-11' / '2026-11-10.csv.gz').write_bytes(b'')
+    (tmp_path / 'ha' / 'burst' / '2026-11-11').mkdir(parents=True)
+    (tmp_path / 'ha' / 'burst' / '2026-11-11' / '07.csv.gz').write_bytes(b'')
+    line, problem = watchdog.check_home_assistant(date(2026, 11, 11))
+    assert problem is None and '2026-11-10' in line

@@ -18,13 +18,16 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytz
 
+import monthly
+
 PACIFIC = pytz.timezone('America/Los_Angeles')
 
 # (file, timestamp column, how old the newest row may get)
 CHECKS = [
     # Polled every 5 minutes.
-    ('pool_history.csv', 'timestamp', timedelta(minutes=45)),
-    ('weather_history.csv', 'timestamp', timedelta(minutes=45)),
+    # (monthly files: the newest of pool/YYYY-MM.csv, weather/YYYY-MM.csv)
+    ('pool', 'timestamp', timedelta(minutes=45)),
+    ('weather', 'timestamp', timedelta(minutes=45)),
     # Pulled nightly for complete days, so the newest interval is the most
     # recent midnight; allow for one missed night.
     ('energy_history.csv', 'interval_end', timedelta(hours=54)),
@@ -49,7 +52,9 @@ def check_home_assistant(today):
     The Pi uploads each finished day after 00:20, so yesterday is normally the
     newest; one missed night is allowed. Returns (status line, problem or None).
     """
-    days = [name[:10] for root, _, files in os.walk('ha') for name in files if name.endswith('.csv.gz')]
+    # Daily files only (ha/YYYY-MM/YYYY-MM-DD.csv.gz), not the hourly ha/burst/ files.
+    days = [name[:10] for root, _, files in os.walk('ha') for name in files
+            if len(name) == 17 and name.endswith('.csv.gz') and name[4] == '-' and name[7] == '-']
     if not days:
         return "| Home Assistant `ha/` | no days uploaded yet | | ⏳ |", None
     newest = datetime.strptime(max(days), "%Y-%m-%d").date()
@@ -87,7 +92,8 @@ def main():
     now = datetime.now(PACIFIC)
     stale = []
     lines = ["## Data Watchdog", "", "| Data | Newest | Age | Status |", "| :--- | :--- | :--- | :--- |"]
-    for path, column, limit in CHECKS:
+    for name, column, limit in CHECKS:
+        path = name if '.' in name else (monthly.latest(name) or f"{name}/")
         if not os.path.exists(path):
             stale.append(path)
             lines.append(f"| `{path}` | missing | | ❌ STALE |")

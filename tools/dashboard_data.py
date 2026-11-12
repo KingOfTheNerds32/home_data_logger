@@ -28,6 +28,9 @@ import sys
 
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import monthly  # noqa: E402  (repo root)
+
 WASHED = {'202239007222', '202239035769', '202239032861', '202239032948'}   # washed 2026-06-05
 
 
@@ -208,7 +211,7 @@ def pool_daily():
     Hours are summed from each reading's duration (capped at 10 minutes, so a
     logging gap doesn't count as running). Pool temperature only counts while
     the pump runs, since the sensor sits in the pipe."""
-    p = pd.read_csv('pool_history.csv', low_memory=False)
+    p = monthly.read('pool', low_memory=False)
     p['t'] = pd.to_datetime(p.timestamp)
     p['hours'] = (p.t.shift(-1) - p.t).dt.total_seconds().clip(upper=600).fillna(300) / 3600
     p['date'] = p.t.dt.strftime('%Y-%m-%d')
@@ -225,7 +228,7 @@ def pool_daily():
     d = p.groupby('date').agg(pool_temp_max=('pool_temp_running', 'max'), pool_temp_min=('pool_temp_settled', 'min'),
                               pump_hours=('pump_h', 'sum'), gas_heater_hours=('gas_h', 'sum'),
                               heat_pump_hours=('hp_h', 'sum'), spillover_hours=('spill_h', 'sum'))
-    w = pd.read_csv('weather_history.csv')
+    w = monthly.read('weather')
     w['date'] = w.timestamp.str[:10]
     wd = w.groupby('date').agg(outdoor_temp_max=('temp_actual', 'max'), outdoor_temp_min=('temp_actual', 'min'),
                                clouds_pct=('clouds_percent', 'mean'), rain_mm=('rain_1h_mm', lambda x: x.sum() / 12))

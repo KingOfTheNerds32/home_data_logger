@@ -2,7 +2,7 @@ name: Push to home_data
 description: Commit the given paths in ./data and push, rebasing onto anything pushed meanwhile.
 inputs:
   paths:
-    description: Space-separated files, folders or globs (relative to data/); missing ones are skipped
+    description: Space-separated files, folders or globs (relative to data/); missing ones are skipped, tracked ones that were deleted are committed as deleted
     required: true
   message:
     description: Commit message prefix; the date is appended
@@ -19,8 +19,11 @@ runs:
         cd data 2>/dev/null && [ -d .git ] || exit 0
         git config user.name "PoolBot"
         git config user.email "poolbot@github.com"
+        # -A also stages deletions (a tracked file the run removed).
         for p in $PATHS; do
-          [ -e "$p" ] && git add "$p"
+          if [ -e "$p" ] || git ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+            git add -A -- "$p"
+          fi
         done
         git commit -m "$MESSAGE: $(date)" || exit 0
         # The pull fails harmlessly on the very first push, before main exists.
