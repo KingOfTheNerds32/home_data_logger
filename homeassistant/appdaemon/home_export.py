@@ -129,7 +129,9 @@ class HomeExport(hass.Hass):
             self.write(self.datetime().replace(microsecond=0), rows)
 
     def upload_finished_days(self, kwargs):
-        today = f"{self.datetime():%Y-%m-%d}.csv"
+        # Only days that ended at least 2 minutes ago, so a reading written at the
+        # last instant of a day can't start a new file after the upload.
+        today = f"{self.datetime() - timedelta(minutes=2):%Y-%m-%d}.csv"
         for name in sorted(os.listdir(self.data_dir)):
             if not name.endswith('.csv') or name >= today:
                 continue  # today's file is still being written

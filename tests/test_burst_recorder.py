@@ -18,3 +18,23 @@ def test_read_token_key(tmp_path):
     p.write_text('github_home_data_token: abc\nenvoy_token: "eyJ.x.y"\n')
     assert read_token_key(str(p), 'envoy_token') == 'eyJ.x.y'
     assert read_token_key(str(tmp_path / 'missing.yaml'), 'envoy_token') is None
+
+
+def test_upload_waits_for_hour_to_settle(tmp_path, monkeypatch):
+    import datetime as dt
+    import burst_recorder as br
+
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 11, 12, 9, 1, 0)       # 1 minute into the 9 AM hour
+
+    monkeypatch.setattr(br.dt, 'datetime', Clock)
+    app = br.BurstRecorder()
+    app.token, app.data_dir, app.folder = 'x', str(tmp_path), 'ha/burst'
+    for h in ('07', '08', '09'):
+        (tmp_path / f"2026-11-12_{h}.csv").write_text('timestamp,source,value\n')
+    sent = []
+    monkeypatch.setattr(br.HomeExport, 'put_file', lambda self, path, content, msg: sent.append(path) or True)
+    app.upload({})
+    assert sent == ['ha/burst/2026-11-12/07.csv.gz']   # 8 AM hour ended < 2 min ago: waits

@@ -55,6 +55,9 @@ def parse_batteries(payload):
     return out
 
 
+SETTLE = dt.timedelta(minutes=2)
+
+
 class BurstRecorder(hass.Hass):
 
     def initialize(self):
@@ -133,7 +136,9 @@ class BurstRecorder(hass.Hass):
     def upload(self, kwargs):
         if not self.token:
             return
-        current = f"{dt.datetime.now():%Y-%m-%d_%H}.csv"
+        # Only hours that ended at least SETTLE ago, so a reading written in the
+        # last instant of an hour can't start a new file after the upload.
+        current = f"{dt.datetime.now() - SETTLE:%Y-%m-%d_%H}.csv"
         for name in sorted(os.listdir(self.data_dir)):
             if not name.endswith('.csv') or name >= current:
                 continue  # the current hour is still being written
