@@ -25,6 +25,8 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import pytz
 
+import monthly
+
 PACIFIC = pytz.timezone('America/Los_Angeles')
 BATTERY_KWH = 20.16          # 2 x IQ Battery 10T
 PEAK_HOURS = range(17, 20)   # SCE TOU-D-5-8PM peak, 5-8 PM
@@ -149,7 +151,7 @@ def car_section(start, end, e):
 
 def pool_section(start, end):
     lines = ['## Pool']
-    p = read('pool_history.csv', low_memory=False)
+    p = monthly.read('pool', low_memory=False)
     if p is None:
         return lines + ['No pool data.']
     p['t'] = pd.to_datetime(p.timestamp)
@@ -200,7 +202,7 @@ def data_section(start, end, e):
         gaps = e[e[core].isna().any(axis=1)]
         if not gaps.empty:
             problems.append(f'{len(gaps)} 15-min intervals with missing values')
-    p = read('pool_history.csv', low_memory=False)
+    p = monthly.read('pool', low_memory=False)
     if p is not None:
         c = pd.to_datetime(p.timestamp).dt.date.value_counts().reindex(days, fill_value=0)
         thin = c[c < 250]   # 288 expected at 5-minute polling

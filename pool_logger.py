@@ -5,6 +5,8 @@ from datetime import datetime
 import os
 import pytz
 import httpx
+
+import monthly
 from iaqualink.client import AqualinkClient
 
 async def harvest_pool_data(ts_string):
@@ -89,10 +91,7 @@ async def harvest_pool_data(ts_string):
         }
 
         # Save to CSV
-        df = pd.DataFrame([final_row])
-        file_path = 'pool_history.csv'
-        header_needed = not os.path.exists(file_path) or os.stat(file_path).st_size == 0
-        df.to_csv(file_path, mode='a', header=header_needed, index=False)
+        monthly.append('pool', pd.DataFrame([final_row]), ts_string)   # pool/YYYY-MM.csv
         print(f"Logged all equipment states at {ts_string} PT")
 
 if __name__ == "__main__":

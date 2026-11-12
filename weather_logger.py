@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime
 import pytz
 
+import monthly
+
 def harvest_weather_data(ts_string):
     API_KEY = os.environ.get('OPENWEATHER_API_KEY')
     LAT = os.environ.get('LAT')
@@ -63,12 +65,7 @@ def harvest_weather_data(ts_string):
         'condition_desc': data['weather'][0].get('description')
     }
     
-    df = pd.DataFrame([weather_row])
-    file_path = 'weather_history.csv'
-    
-    # Logic to handle headers and appending
-    header_needed = not os.path.exists(file_path) or os.stat(file_path).st_size == 0
-    df.to_csv(file_path, mode='a', header=header_needed, index=False)
+    monthly.append('weather', pd.DataFrame([weather_row]), ts_string)   # weather/YYYY-MM.csv
     
     print(f"[{now.strftime('%H:%M')}] Logged {len(weather_row)} data points for {LAT}, {LON}")
 

@@ -60,7 +60,9 @@ jobs:
         if: always()
         uses: ./.github/actions/push-data
         with:
-          paths: "*.csv"
+          # Monthly logs, plus the old single files so their removal (after the
+          # one-time split into monthly files) is committed.
+          paths: pool weather runs pool_history.csv weather_history.csv execution_log.csv
           message: Telemetry Update
 
       # A red run triggers GitHub's failure email. Only fail on sustained outages
